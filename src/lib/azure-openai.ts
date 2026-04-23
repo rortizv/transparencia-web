@@ -1,12 +1,20 @@
 import { createAzure } from "@ai-sdk/azure";
 
-const azure = createAzure({
-  resourceName: new URL(process.env.AZURE_OPENAI_ENDPOINT!).hostname.split(".")[0],
-  apiKey: process.env.AZURE_OPENAI_API_KEY!,
-});
+function buildAzure() {
+  const endpoint = process.env.AZURE_OPENAI_ENDPOINT;
+  if (!endpoint) throw new Error("AZURE_OPENAI_ENDPOINT is not set");
+  return createAzure({
+    resourceName: new URL(endpoint).hostname.split(".")[0],
+    apiKey: process.env.AZURE_OPENAI_API_KEY!,
+  });
+}
 
-export const gpt4o = azure(process.env.AZURE_OPENAI_GPT4O_DEPLOYMENT ?? "gpt-4o");
+export function getGpt4o() {
+  return buildAzure()(process.env.AZURE_OPENAI_GPT4O_DEPLOYMENT ?? "gpt-4o");
+}
 
-export const embeddingModel = azure.textEmbeddingModel(
-  process.env.AZURE_OPENAI_EMBEDDING_DEPLOYMENT ?? "text-embedding-3-small"
-);
+export function getEmbeddingModel() {
+  return buildAzure().textEmbeddingModel(
+    process.env.AZURE_OPENAI_EMBEDDING_DEPLOYMENT ?? "text-embedding-3-small"
+  );
+}
