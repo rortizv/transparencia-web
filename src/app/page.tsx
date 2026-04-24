@@ -1,13 +1,75 @@
 "use client";
 
 import { useChat } from "@ai-sdk/react";
-import { isTextUIPart } from "ai";
+import { getToolName, isTextUIPart, isToolUIPart } from "ai";
+import type { UIMessage } from "ai";
 import { AnimatePresence, motion } from "framer-motion";
-import { Moon, Search, Send, Sun } from "lucide-react";
+import { Building2, Calendar, ExternalLink, MapPin, Moon, Search, Send, Sun, User, Zap } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+interface ContractResult {
+  id_contrato: string;
+  nombre_entidad: string | null;
+  objeto_del_contrato: string | null;
+  valor_del_contrato: number | null;
+  departamento: string | null;
+  fecha_de_firma: string | null;
+  proveedor_adjudicado: string | null;
+  urlproceso: string | null;
+  estado_contrato: string | null;
+  modalidad_de_contratacion: string | null;
+  flags: Record<string, unknown>;
+}
+
+const FLAG_LABELS: Record<string, string> = {
+  contratacion_directa: "Contratación directa",
+  proveedor_frecuente: "Proveedor frecuente",
+  valor_alto_sector: "Valor atípico",
+  sin_proceso_url: "Sin URL de proceso",
+  plazo_muy_corto: "Plazo muy corto",
+};
+
+interface ToolPayload {
+  results?: ContractResult[];
+  total?: number;
+  source?: "db" | "socrata";
+  error?: string;
+}
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const TOOL_LABELS: Record<string, { label: string; icon: string }> = {
+  buscarEnDB: { label: "Buscando en base de datos...", icon: "🔍" },
+  consultarSecop: { label: "Consultando SECOP II en tiempo real...", icon: "🌐" },
+};
+
+const SUGGESTED_QUERIES = [
+  "¿Cuáles son los contratos más grandes del Chocó en 2024?",
+  "Contratos de consultoría en Bogotá superiores a 500 millones",
+  "¿Qué contratos tiene la Gobernación de Antioquia en 2025?",
+  "Muéstrame contratos de obra pública en Nariño",
+];
+
+// ── Formatters ────────────────────────────────────────────────────────────────
+
+function formatCOP(value: number | null): string {
+  if (value == null) return "—";
+  if (value >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(1)}B`;
+  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(0)}M`;
+  return `$${value.toLocaleString("es-CO")}`;
+}
+
+function formatDate(iso: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("es-CO", { year: "numeric", month: "short", day: "numeric" });
+}
+
+// ── Small components ──────────────────────────────────────────────────────────
 
 function ThemeToggle() {
   const { theme, setTheme } = useTheme();
@@ -43,6 +105,235 @@ function LoadingDots() {
   );
 }
 
+function ToolStatusBubble({ toolName }: { toolName: string }) {
+  const info = TOOL_LABELS[toolName] ?? { label: `Usando ${toolName}...`, icon: "⚙️" };
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="flex justify-start"
+    >
+      <div className="flex items-center gap-2 rounded-xl px-3 py-2 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-xs font-medium">
+        <motion.span
+          animate={{ rotate: 360 }}
+          transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
+          className="inline-block"
+        >
+          {info.icon}
+        </motion.span>
+        {info.label}
+      </div>
+    </motion.div>
+  );
+}
+
+function ContractCard({ contract }: { contract: ContractResult }) {
+  return (
+    <div className="rounded-xl border border-border bg-card p-3 space-y-2 hover:border-blue-400/60 transition-colors">
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-sm font-medium leading-snug line-clamp-2 flex-1">
+          {contract.objeto_del_contrato ?? "Sin descripción"}
+        </p>
+        <span className="shrink-0 text-sm font-bold text-blue-600 dark:text-blue-400">
+          {formatCOP(contract.valor_del_contrato)}
+        </span>
+      </div>
+
+      <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        {contract.nombre_entidad && (
+          <span className="flex items-center gap-1">
+            <Building2 size={11} />
+            {contract.nombre_entidad}
+          </span>
+        )}
+        {contract.proveedor_adjudicado && (
+          <span className="flex items-center gap-1">
+            <User size={11} />
+            {contract.proveedor_adjudicado}
+          </span>
+        )}
+        {contract.departamento && (
+          <span className="flex items-center gap-1">
+            <MapPin size={11} />
+            {contract.departamento}
+          </span>
+        )}
+        {contract.fecha_de_firma && (
+          <span className="flex items-center gap-1">
+            <Calendar size={11} />
+            {formatDate(contract.fecha_de_firma)}
+          </span>
+        )}
+      </div>
+
+      {/* Red flags */}
+      {contract.flags && Object.keys(contract.flags).length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {Object.keys(contract.flags).map((flag) => (
+            <span
+              key={flag}
+              title={`Bandera roja: ${FLAG_LABELS[flag] ?? flag}`}
+              className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 dark:bg-red-950/50 text-red-700 dark:text-red-400 font-medium border border-red-200 dark:border-red-800"
+            >
+              🚩 {FLAG_LABELS[flag] ?? flag}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div className="flex items-center justify-between gap-2 pt-0.5">
+        <div className="flex gap-1.5 flex-wrap">
+          {contract.estado_contrato && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground font-medium">
+              {contract.estado_contrato}
+            </span>
+          )}
+          {contract.modalidad_de_contratacion && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground font-medium">
+              {contract.modalidad_de_contratacion}
+            </span>
+          )}
+        </div>
+        {contract.urlproceso && (
+          <a
+            href={contract.urlproceso}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1 text-[10px] text-blue-500 hover:text-blue-400 transition-colors shrink-0"
+          >
+            Ver proceso <ExternalLink size={10} />
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ToolResultCards({ payload, source }: { payload: ToolPayload; source: string }) {
+  if (payload.error) return null;
+  const results = payload.results ?? [];
+  if (results.length === 0) return null;
+
+  const sourceLabel = source === "buscarEnDB"
+    ? { icon: <Zap size={11} />, text: "Base de datos indexada" }
+    : { icon: <Search size={11} />, text: "SECOP II en tiempo real" };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="space-y-2"
+    >
+      <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+        {sourceLabel.icon}
+        <span>{sourceLabel.text} · {payload.total ?? results.length} resultado{(payload.total ?? results.length) !== 1 ? "s" : ""}</span>
+      </div>
+      <div className="space-y-2">
+        {results.slice(0, 5).map((c) => (
+          <ContractCard key={c.id_contrato} contract={c} />
+        ))}
+        {results.length > 5 && (
+          <p className="text-xs text-muted-foreground text-center">
+            + {results.length - 5} contratos más en la respuesta
+          </p>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
+// ── Message renderer ──────────────────────────────────────────────────────────
+
+function MessageBubble({ message }: { message: UIMessage }) {
+  const isUser = message.role === "user";
+  const text = message.parts.filter(isTextUIPart).map((p) => p.text).join("");
+  const toolParts = message.parts.filter(isToolUIPart);
+
+  // Pending: tool call received but no output yet
+  const pendingTools = toolParts.filter(
+    (p) => p.state === "input-streaming" || p.state === "input-available"
+  );
+
+  // Completed: tool has output
+  const completedTools = toolParts.filter((p) => p.state === "output-available");
+
+  if (!text && pendingTools.length === 0 && completedTools.length === 0) return null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25, ease: "easeOut" }}
+      className={`flex flex-col gap-2 ${isUser ? "items-end" : "items-start"}`}
+    >
+      {/* Tool status while pending */}
+      {pendingTools.map((p) => (
+        <ToolStatusBubble key={p.toolCallId} toolName={getToolName(p)} />
+      ))}
+
+      {/* Contract cards from tool results — shown before the text summary */}
+      {!isUser && completedTools.map((p) => {
+        const payload = (p as { output: ToolPayload }).output;
+        return (
+          <ToolResultCards
+            key={p.toolCallId}
+            payload={payload}
+            source={getToolName(p)}
+          />
+        );
+      })}
+
+      {/* Text bubble */}
+      {text && (
+        <div
+          className={`rounded-2xl px-4 py-3 max-w-[82%] text-sm leading-relaxed ${
+            isUser
+              ? "bg-blue-600 text-white rounded-br-sm"
+              : "bg-muted text-foreground rounded-bl-sm"
+          }`}
+        >
+          {!isUser && (
+            <span className="block text-[11px] font-semibold text-muted-foreground mb-1.5 uppercase tracking-wide">
+              TransparencIA
+            </span>
+          )}
+          <div className={`prose prose-sm max-w-none ${isUser ? "prose-invert" : "dark:prose-invert"}`}>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                a: ({ href, children }) => (
+                  <a
+                    href={href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-500 underline underline-offset-2 hover:text-blue-400 transition-colors"
+                  >
+                    {children}
+                  </a>
+                ),
+                p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                ul: ({ children }) => <ul className="mb-2 pl-4 space-y-1 list-disc">{children}</ul>,
+                ol: ({ children }) => <ol className="mb-2 pl-4 space-y-1 list-decimal">{children}</ol>,
+                li: ({ children }) => <li className="leading-snug">{children}</li>,
+                strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+                code: ({ children }) => (
+                  <code className="bg-black/10 dark:bg-white/10 px-1 py-0.5 rounded text-xs font-mono">
+                    {children}
+                  </code>
+                ),
+              }}
+            >
+              {text}
+            </ReactMarkdown>
+          </div>
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────────
+
 export default function ChatPage() {
   const { messages, sendMessage, status } = useChat();
   const [input, setInput] = useState("");
@@ -58,6 +349,11 @@ export default function ChatPage() {
     if (!input.trim() || isLoading) return;
     sendMessage({ text: input });
     setInput("");
+  }
+
+  function handleSuggestion(q: string) {
+    if (isLoading) return;
+    sendMessage({ text: q });
   }
 
   return (
@@ -83,77 +379,35 @@ export default function ChatPage() {
         <div className="max-w-3xl mx-auto space-y-5">
           <AnimatePresence initial={false}>
             {messages.length === 0 && (
-              <motion.p
+              <motion.div
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="text-sm text-muted-foreground text-center mt-16"
+                className="mt-12 space-y-6"
               >
-                Pregunta sobre contratos públicos colombianos.{" "}
-                <span className="italic">
-                  &ldquo;¿Cuáles son los contratos más grandes del Chocó en 2025?&rdquo;
-                </span>
-              </motion.p>
+                <p className="text-sm text-muted-foreground text-center">
+                  Auditor conversacional de contratación pública colombiana.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {SUGGESTED_QUERIES.map((q) => (
+                    <button
+                      key={q}
+                      onClick={() => handleSuggestion(q)}
+                      className="text-left text-xs px-3 py-2.5 rounded-xl border border-border bg-muted/40 hover:bg-muted hover:border-blue-400/60 text-muted-foreground hover:text-foreground transition-all"
+                    >
+                      {q}
+                    </button>
+                  ))}
+                </div>
+              </motion.div>
             )}
 
-            {messages.map((m) => {
-              const text = m.parts.filter(isTextUIPart).map((p) => p.text).join("");
-              if (!text) return null;
-              const isUser = m.role === "user";
-              return (
-                <motion.div
-                  key={m.id}
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.25, ease: "easeOut" }}
-                  className={`flex ${isUser ? "justify-end" : "justify-start"}`}
-                >
-                  <div
-                    className={`rounded-2xl px-4 py-3 max-w-[82%] text-sm leading-relaxed ${
-                      isUser
-                        ? "bg-blue-600 text-white rounded-br-sm"
-                        : "bg-muted text-foreground rounded-bl-sm"
-                    }`}
-                  >
-                    {!isUser && (
-                      <span className="block text-[11px] font-semibold text-muted-foreground mb-1.5 uppercase tracking-wide">
-                        TransparencIA
-                      </span>
-                    )}
-                    <div className={`prose prose-sm max-w-none ${isUser ? "prose-invert" : "dark:prose-invert"}`}>
-                      <ReactMarkdown
-                        remarkPlugins={[remarkGfm]}
-                        components={{
-                          a: ({ href, children }) => (
-                            <a
-                              href={href}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-blue-500 underline underline-offset-2 hover:text-blue-400 transition-colors"
-                            >
-                              {children}
-                            </a>
-                          ),
-                          p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
-                          ul: ({ children }) => <ul className="mb-2 pl-4 space-y-1 list-disc">{children}</ul>,
-                          ol: ({ children }) => <ol className="mb-2 pl-4 space-y-1 list-decimal">{children}</ol>,
-                          li: ({ children }) => <li className="leading-snug">{children}</li>,
-                          strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
-                          code: ({ children }) => (
-                            <code className="bg-black/10 dark:bg-white/10 px-1 py-0.5 rounded text-xs font-mono">
-                              {children}
-                            </code>
-                          ),
-                        }}
-                      >
-                        {text}
-                      </ReactMarkdown>
-                    </div>
-                  </div>
-                </motion.div>
-              );
-            })}
+            {messages.map((m) => (
+              <MessageBubble key={m.id} message={m} />
+            ))}
 
-            {isLoading && <LoadingDots key="loading" />}
+            {isLoading && messages[messages.length - 1]?.role === "user" && (
+              <LoadingDots key="loading" />
+            )}
           </AnimatePresence>
 
           <div ref={bottomRef} />

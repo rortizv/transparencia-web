@@ -5,13 +5,15 @@ import { getGpt4o } from "@/lib/azure-openai";
 const SYSTEM_PROMPT = `Eres TransparencIA, asistente especializado en auditoría de contratación pública colombiana.
 
 Reglas estrictas:
-- SIEMPRE llama a consultarSecop antes de responder cualquier pregunta sobre contratos.
-- Si la tool retorna resultados vacíos (array vacío o total=0), responde exactamente: "No encontré contratos que coincidan con tu búsqueda en SECOP II. Intenta con otros filtros, como otro departamento, año o palabra clave."
-- NUNCA inventes ni construyas URLs. Solo usa los links que vengan en el campo urlproceso de los resultados de la tool. Si un contrato no tiene urlproceso, no pongas ningún link.
+- Para preguntas sobre contratos, usa primero buscarEnDB (búsqueda semántica en nuestra base de datos indexada). Si no hay resultados, usa consultarSecop como fallback en tiempo real.
+- Si ambas tools retornan resultados vacíos, responde exactamente: "No encontré contratos que coincidan con tu búsqueda. Intenta con otros filtros, como otro departamento, año o palabra clave."
+- NUNCA inventes ni construyas URLs. Solo usa los links que vengan en el campo urlproceso de los resultados. Si un contrato no tiene urlproceso, no pongas ningún link.
 - NUNCA generes links a datos.gov.co, a la API de Socrata, ni a ningún otro sitio que no sea community.secop.gov.co.
 - NUNCA afirmes corrupción directamente. Usa "patrón inusual" o "bandera roja".
 - Cita siempre el campo id_contrato junto al urlproceso cuando estén disponibles.
 - Responde en español. Sé conciso y factual.`;
+
+// ── Socrata fallback ──────────────────────────────────────────────────────────
 
 const SECOP_DATASET = "jbjy-vk9h";
 const SOCRATA_BASE = "https://www.datos.gov.co/resource";
@@ -29,7 +31,6 @@ const SELECT_FIELDS = [
   "id_contrato",
 ].join(",");
 
-// Exact values as they appear in the SECOP II dataset
 const COLOMBIAN_DEPARTMENTS: Record<string, string> = {
   AMAZONAS: "Amazonas",
   ANTIOQUIA: "Antioquia",
@@ -85,15 +86,55 @@ function buildWhereClause(query: string): string | null {
   return conditions.length > 0 ? conditions.join(" AND ") : null;
 }
 
-const secopSchema = z.object({
+// ── Tools ─────────────────────────────────────────────────────────────────────
+
+const buscarEnDBSchema = z.object({
+  q: z.string().describe("Búsqueda en lenguaje natural — se usará para búsqueda semántica"),
+  departamento: z.string().optional().describe("Nombre del departamento colombiano (ej: Chocó, Antioquia)"),
+  year: z.number().int().optional().describe("Año de firma del contrato (ej: 2024)"),
+  entidad: z.string().optional().describe("Nombre parcial de la entidad contratante"),
+  proveedor: z.string().optional().describe("Nombre parcial del proveedor adjudicado"),
+  min_valor: z.number().optional().describe("Valor mínimo del contrato en COP"),
+  page_size: z.number().int().optional().describe("Número de resultados (default 20, max 50)"),
+});
+
+const consultarSecopSchema = z.object({
   query: z.string().describe("Pregunta en lenguaje natural sobre contratos públicos colombianos"),
+});
+
+const buscarEnDB = tool({
+  description:
+    "Busca contratos en nuestra base de datos indexada con búsqueda semántica (pgvector). " +
+    "Úsala primero para cualquier pregunta sobre contratos — es más precisa y rápida que Socrata.",
+  inputSchema: zodSchema(buscarEnDBSchema),
+  execute: async ({ q, departamento, year, entidad, proveedor, min_valor, page_size }: z.infer<typeof buscarEnDBSchema>) => {
+    const apiBase = process.env.ANALYTICS_API_URL ?? "http://localhost:8000";
+    const params = new URLSearchParams({ q });
+    if (departamento) params.set("departamento", departamento);
+    if (year) params.set("year", String(year));
+    if (entidad) params.set("entidad", entidad);
+    if (proveedor) params.set("proveedor", proveedor);
+    if (min_valor) params.set("min_valor", String(min_valor));
+    params.set("page_size", String(Math.min(page_size ?? 20, 50)));
+
+    const url = `${apiBase}/api/v1/contracts?${params.toString()}`;
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+      if (!res.ok) return { error: `Analytics API error: ${res.status}`, results: [] };
+      const data = await res.json();
+      return { results: data.data, total: data.total, source: "db" };
+    } catch {
+      return { error: "Analytics API unreachable", results: [] };
+    }
+  },
 });
 
 const consultarSecop = tool({
   description:
-    "Consulta contratos en el dataset SECOP II de Colombia. Úsala siempre que el usuario pregunte sobre contratos, entidades, proveedores o irregularidades.",
-  inputSchema: zodSchema(secopSchema),
-  execute: async ({ query }: z.infer<typeof secopSchema>) => {
+    "Fallback: consulta contratos en tiempo real desde SECOP II (Socrata). " +
+    "Úsala solo si buscarEnDB no retorna resultados.",
+  inputSchema: zodSchema(consultarSecopSchema),
+  execute: async ({ query }: z.infer<typeof consultarSecopSchema>) => {
     const params = new URLSearchParams({
       $select: SELECT_FIELDS,
       $order: "valor_del_contrato DESC",
@@ -104,20 +145,19 @@ const consultarSecop = tool({
     if (where) params.set("$where", where);
 
     const url = `${SOCRATA_BASE}/${SECOP_DATASET}.json?${params.toString()}`;
-
     const appToken = process.env.SOCRATA_APP_TOKEN;
     const headers: HeadersInit = { Accept: "application/json" };
     if (appToken) headers["X-App-Token"] = appToken;
 
     const res = await fetch(url, { headers });
-    if (!res.ok) {
-      return { error: `SECOP API error: ${res.status} ${res.statusText}` };
-    }
+    if (!res.ok) return { error: `SECOP API error: ${res.status} ${res.statusText}` };
 
     const data = await res.json();
-    return { results: data, total: data.length, query_url: url };
+    return { results: data, total: data.length, source: "socrata" };
   },
 });
+
+// ── Handler ───────────────────────────────────────────────────────────────────
 
 export async function POST(req: Request) {
   const { messages } = await req.json();
@@ -126,7 +166,7 @@ export async function POST(req: Request) {
     model: getGpt4o(),
     system: SYSTEM_PROMPT,
     messages: await convertToModelMessages(messages),
-    tools: { consultarSecop },
+    tools: { buscarEnDB, consultarSecop },
     stopWhen: stepCountIs(5),
   });
 
