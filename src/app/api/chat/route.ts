@@ -1,4 +1,4 @@
-import { stepCountIs, streamText, tool, zodSchema } from "ai";
+import { convertToModelMessages, stepCountIs, streamText, tool, zodSchema } from "ai";
 import { z } from "zod";
 import { getGpt4o } from "@/lib/azure-openai";
 
@@ -15,33 +15,58 @@ const SOCRATA_BASE = "https://www.datos.gov.co/resource";
 const SELECT_FIELDS = [
   "nombre_entidad",
   "nit_entidad",
-  "nombre_del_proveedor_adjudicado",
-  "nit_del_proveedor",
+  "proveedor_adjudicado",
+  "documento_proveedor",
   "objeto_del_contrato",
   "valor_del_contrato",
   "modalidad_de_contratacion",
   "departamento",
   "fecha_de_firma",
-  "url_proceso",
+  "urlproceso",
+  "id_contrato",
 ].join(",");
 
-const COLOMBIAN_DEPARTMENTS = [
-  "AMAZONAS", "ANTIOQUIA", "ARAUCA", "ATLÁNTICO", "BOLÍVAR", "BOYACÁ",
-  "CALDAS", "CAQUETÁ", "CASANARE", "CAUCA", "CESAR", "CHOCÓ",
-  "CÓRDOBA", "CUNDINAMARCA", "GUAINÍA", "GUAVIARE", "HUILA",
-  "LA GUAJIRA", "MAGDALENA", "META", "NARIÑO", "NORTE DE SANTANDER",
-  "PUTUMAYO", "QUINDÍO", "RISARALDA", "SAN ANDRÉS", "SANTANDER",
-  "SUCRE", "TOLIMA", "VALLE DEL CAUCA", "VAUPÉS", "VICHADA",
-];
+// Exact values as they appear in the SECOP II dataset
+const COLOMBIAN_DEPARTMENTS: Record<string, string> = {
+  AMAZONAS: "Amazonas",
+  ANTIOQUIA: "Antioquia",
+  ARAUCA: "Arauca",
+  ATLANTICO: "Atlántico",
+  BOLIVAR: "Bolívar",
+  BOYACA: "Boyacá",
+  CALDAS: "Caldas",
+  CAQUETA: "Caquetá",
+  CASANARE: "Casanare",
+  CAUCA: "Cauca",
+  CESAR: "Cesar",
+  CHOCO: "Chocó",
+  CORDOBA: "Córdoba",
+  CUNDINAMARCA: "Cundinamarca",
+  HUILA: "Huila",
+  "LA GUAJIRA": "La Guajira",
+  MAGDALENA: "Magdalena",
+  META: "Meta",
+  NARINO: "Nariño",
+  "NORTE DE SANTANDER": "Norte de Santander",
+  PUTUMAYO: "Putumayo",
+  QUINDIO: "Quindío",
+  RISARALDA: "Risaralda",
+  "SAN ANDRES": "San Andrés, Providencia y Santa Catalina",
+  SANTANDER: "Santander",
+  SUCRE: "Sucre",
+  TOLIMA: "Tolima",
+  "VALLE DEL CAUCA": "Valle del Cauca",
+  VICHADA: "Vichada",
+  BOGOTA: "Distrito Capital de Bogotá",
+};
 
 function buildWhereClause(query: string): string | null {
   const upper = query.toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   const conditions: string[] = [];
 
-  for (const dept of COLOMBIAN_DEPARTMENTS) {
-    const deptNorm = dept.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    if (upper.includes(deptNorm)) {
-      conditions.push(`departamento='${dept}'`);
+  for (const [key, exactValue] of Object.entries(COLOMBIAN_DEPARTMENTS)) {
+    if (upper.includes(key)) {
+      conditions.push(`departamento='${exactValue}'`);
       break;
     }
   }
@@ -97,7 +122,7 @@ export async function POST(req: Request) {
   const result = streamText({
     model: getGpt4o(),
     system: SYSTEM_PROMPT,
-    messages,
+    messages: await convertToModelMessages(messages),
     tools: { consultarSecop },
     stopWhen: stepCountIs(5),
   });
