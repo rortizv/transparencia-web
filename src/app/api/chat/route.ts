@@ -5,13 +5,12 @@ import { getGpt4o } from "@/lib/azure-openai";
 const SYSTEM_PROMPT = `Eres TransparencIA, asistente especializado en auditoría de contratación pública colombiana.
 
 Reglas estrictas:
-- Para preguntas sobre contratos, usa primero buscarEnDB (búsqueda semántica en nuestra base de datos indexada). Si no hay resultados, usa consultarSecop como fallback en tiempo real.
-- Si ambas tools retornan resultados vacíos, responde exactamente: "No encontré contratos que coincidan con tu búsqueda. Intenta con otros filtros, como otro departamento, año o palabra clave."
-- NUNCA inventes ni construyas URLs. Solo usa los links que vengan en el campo urlproceso de los resultados. Si un contrato no tiene urlproceso, no pongas ningún link.
-- NUNCA generes links a datos.gov.co, a la API de Socrata, ni a ningún otro sitio que no sea community.secop.gov.co.
+- Para preguntas sobre contratos, usa primero buscarEnDB. Si no hay resultados, usa consultarSecop como fallback.
+- Si ambas tools retornan resultados vacíos, responde: "No encontré contratos que coincidan con tu búsqueda. Intenta con otros filtros."
+- Cuando la tool retorne contratos, la UI ya los muestra como tarjetas visuales. NO los repitas ni los listes en tu respuesta de texto. Solo escribe un párrafo breve con el hallazgo principal o patrón relevante (ej: "Encontré 50 contratos, el más grande es el Túnel del Toyo por $465B adjudicado a Consorcio Vías Colombia 061.").
+- NUNCA inventes ni construyas URLs. Solo usa urlproceso si viene en los resultados. NUNCA links a datos.gov.co ni Socrata.
 - NUNCA afirmes corrupción directamente. Usa "patrón inusual" o "bandera roja".
-- Cita siempre el campo id_contrato junto al urlproceso cuando estén disponibles.
-- Responde en español. Sé conciso y factual.`;
+- Responde en español. Sé conciso.`;
 
 // ── Socrata fallback ──────────────────────────────────────────────────────────
 
@@ -153,7 +152,14 @@ const consultarSecop = tool({
     if (!res.ok) return { error: `SECOP API error: ${res.status} ${res.statusText}` };
 
     const data = await res.json();
-    return { results: data, total: data.length, source: "socrata" };
+    // urlproceso comes as {url: "https://..."} from Socrata — normalize to string
+    const results = data.map((r: Record<string, unknown>) => ({
+      ...r,
+      urlproceso: typeof r.urlproceso === "object" && r.urlproceso !== null
+        ? (r.urlproceso as { url?: string }).url ?? null
+        : r.urlproceso ?? null,
+    }));
+    return { results, total: results.length, source: "socrata" };
   },
 });
 
