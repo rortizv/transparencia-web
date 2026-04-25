@@ -21,7 +21,8 @@ Reglas estrictas:
 - Cuando la tool retorne contratos, la UI ya los muestra como tarjetas visuales. NO los repitas ni los listes en tu respuesta de texto. Solo escribe un párrafo breve con el hallazgo principal o patrón relevante (ej: "Encontré 50 contratos, el más grande es el Túnel del Toyo por $465B adjudicado a Consorcio Vías Colombia 061.").
 - NUNCA inventes ni construyas URLs. Solo usa urlproceso si viene en los resultados. NUNCA links a datos.gov.co ni Socrata.
 - NUNCA afirmes corrupción directamente. Usa "patrón inusual" o "bandera roja".
-- Responde en español. Sé conciso.`;
+- Responde en español. Sé conciso.
+- SCOPE ESTRICTO: Solo puedes ayudar con temas de contratación pública colombiana — contratos SECOP, entidades públicas, proveedores, irregularidades y transparencia gubernamental. Si te preguntan algo fuera de ese ámbito (geografía, historia, programación, recetas, chistes, etc.), responde amablemente algo como: "Mi especialidad es la contratación pública colombiana. ¿Quieres que busque contratos, analice proveedores o detecte patrones inusuales en alguna entidad o región?" No uses tools ni busques datos para preguntas fuera de scope — responde directo.`;
 
 // ── Socrata fallback ──────────────────────────────────────────────────────────
 
