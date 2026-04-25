@@ -4,11 +4,19 @@ import { useChat } from "@ai-sdk/react";
 import { getToolName, isTextUIPart, isToolUIPart } from "ai";
 import type { UIMessage } from "ai";
 import { AnimatePresence, motion } from "framer-motion";
-import { Building2, Calendar, Download, ExternalLink, MapPin, Moon, PenSquare, Search, Send, Sun, Tag, User, Zap } from "lucide-react";
+import {
+  Building2, Calendar, Download, ExternalLink, MapPin, Moon,
+  PanelRight, PenSquare, Search, Send, Sun, Tag, User, Zap,
+} from "lucide-react";
 import { useTheme } from "next-themes";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import ConversationSidebar, {
+  type Conversation,
+  MAX_WIDTH as SIDEBAR_MAX_WIDTH,
+} from "./components/ConversationSidebar";
+import { getUserId } from "@/lib/user-id";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -25,6 +33,13 @@ interface ContractResult {
   modalidad_de_contratacion: string | null;
   sector: string | null;
   flags: Record<string, unknown>;
+}
+
+interface StoredLog {
+  id: string;
+  user_message: string;
+  assistant_response: string | null;
+  created_at: string;
 }
 
 const FLAG_LABELS: Record<string, string> = {
@@ -57,6 +72,10 @@ const SUGGESTED_QUERIES = [
   "¿Qué contratos de obra pública hay en Bolívar superiores a 500 millones?",
   "Muéstrame contratos adjudicados de forma directa en Bogotá en 2026",
 ];
+
+const SIDEBAR_OPEN_KEY = "transparencia_sidebar_open";
+const SIDEBAR_WIDTH_KEY = "transparencia_sidebar_width";
+const DEFAULT_SIDEBAR_WIDTH = 280;
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 
@@ -144,38 +163,22 @@ function ContractCard({ contract }: { contract: ContractResult }) {
 
       <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
         {contract.nombre_entidad && (
-          <span className="flex items-center gap-1">
-            <Building2 size={11} />
-            {contract.nombre_entidad}
-          </span>
+          <span className="flex items-center gap-1"><Building2 size={11} />{contract.nombre_entidad}</span>
         )}
         {contract.proveedor_adjudicado && (
-          <span className="flex items-center gap-1">
-            <User size={11} />
-            {contract.proveedor_adjudicado}
-          </span>
+          <span className="flex items-center gap-1"><User size={11} />{contract.proveedor_adjudicado}</span>
         )}
         {contract.departamento && (
-          <span className="flex items-center gap-1">
-            <MapPin size={11} />
-            {contract.departamento}
-          </span>
+          <span className="flex items-center gap-1"><MapPin size={11} />{contract.departamento}</span>
         )}
         {contract.fecha_de_firma && (
-          <span className="flex items-center gap-1">
-            <Calendar size={11} />
-            {formatDate(contract.fecha_de_firma)}
-          </span>
+          <span className="flex items-center gap-1"><Calendar size={11} />{formatDate(contract.fecha_de_firma)}</span>
         )}
         {contract.sector && (
-          <span className="flex items-center gap-1">
-            <Tag size={11} />
-            {contract.sector}
-          </span>
+          <span className="flex items-center gap-1"><Tag size={11} />{contract.sector}</span>
         )}
       </div>
 
-      {/* Red flags */}
       {contract.flags && Object.keys(contract.flags).length > 0 && (
         <div className="flex flex-wrap gap-1">
           {Object.keys(contract.flags).map((flag) => (
@@ -252,11 +255,7 @@ function ToolResultCards({ payload, source }: { payload: ToolPayload; source: st
   const remaining = results.length - shown;
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="space-y-2"
-    >
+    <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="space-y-2">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
           {sourceLabel.icon}
@@ -271,9 +270,7 @@ function ToolResultCards({ payload, source }: { payload: ToolPayload; source: st
         </button>
       </div>
       <div className="space-y-2">
-        {visible.map((c) => (
-          <ContractCard key={c.id_contrato} contract={c} />
-        ))}
+        {visible.map((c) => <ContractCard key={c.id_contrato} contract={c} />)}
         {remaining > 0 && (
           <button
             onClick={() => setShown((s) => s + PAGE_SIZE)}
@@ -286,8 +283,6 @@ function ToolResultCards({ payload, source }: { payload: ToolPayload; source: st
     </motion.div>
   );
 }
-
-// ── Shared markdown components ────────────────────────────────────────────────
 
 const MD_COMPONENTS = {
   a: ({ href, children }: React.ComponentProps<"a">) => (
@@ -306,16 +301,11 @@ const MD_COMPONENTS = {
   ),
 };
 
-// ── Message renderer ──────────────────────────────────────────────────────────
-
 function MessageBubble({ message }: { message: UIMessage }) {
   const isUser = message.role === "user";
   const text = message.parts.filter(isTextUIPart).map((p) => p.text).join("");
   const toolParts = message.parts.filter(isToolUIPart);
-
-  const pendingTools = toolParts.filter(
-    (p) => p.state === "input-streaming" || p.state === "input-available"
-  );
+  const pendingTools = toolParts.filter((p) => p.state === "input-streaming" || p.state === "input-available");
   const completedTools = toolParts.filter((p) => p.state === "output-available");
 
   if (!text && pendingTools.length === 0 && completedTools.length === 0) return null;
@@ -327,19 +317,16 @@ function MessageBubble({ message }: { message: UIMessage }) {
       transition={{ duration: 0.25, ease: "easeOut" }}
       className={`flex flex-col gap-2 ${isUser ? "items-end" : "items-start"}`}
     >
-      {/* Tool status indicator while waiting */}
       {pendingTools.map((p) => (
         <ToolStatusBubble key={p.toolCallId} toolName={getToolName(p)} />
       ))}
 
-      {/* User bubble */}
       {isUser && text && (
         <div className="rounded-2xl px-4 py-3 max-w-[82%] text-sm leading-relaxed bg-blue-600 text-white rounded-br-sm">
           {text}
         </div>
       )}
 
-      {/* Assistant: single unified bubble with cards + text */}
       {!isUser && (
         <div className="rounded-2xl bg-muted text-foreground rounded-bl-sm max-w-[88%] overflow-hidden">
           <div className="px-4 pt-3 pb-1">
@@ -347,7 +334,6 @@ function MessageBubble({ message }: { message: UIMessage }) {
               TransparencIA
             </span>
           </div>
-
           {completedTools.map((p) => {
             const payload = (p as { output: ToolPayload }).output;
             if (!payload?.results?.length) return null;
@@ -357,7 +343,6 @@ function MessageBubble({ message }: { message: UIMessage }) {
               </div>
             );
           })}
-
           {text && (
             <div className="px-4 pb-3 pt-1 text-sm leading-relaxed prose prose-sm max-w-none dark:prose-invert">
               <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>
@@ -371,243 +356,401 @@ function MessageBubble({ message }: { message: UIMessage }) {
   );
 }
 
-// ── localStorage persistence ──────────────────────────────────────────────────
+// ── Conversation API helpers ──────────────────────────────────────────────────
 
-const CURRENT_KEY = "transparencia_current_v1";
-const HISTORY_KEY = "transparencia_history_v1";
-const MAX_HISTORY = 5;
-
-interface ConversationRecord {
-  id: string;
-  timestamp: string;
-  preview: string;
-  messages: UIMessage[];
+async function apiCreateConversation(userId: string): Promise<Conversation | null> {
+  try {
+    const res = await fetch("/api/conversations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: userId }),
+    });
+    if (!res.ok) return null;
+    return res.json();
+  } catch { return null; }
 }
 
-function loadCurrent(): UIMessage[] {
-  if (typeof window === "undefined") return [];
+async function apiFetchConversations(userId: string): Promise<Conversation[]> {
   try {
-    const raw = localStorage.getItem(CURRENT_KEY);
-    return raw ? (JSON.parse(raw) as UIMessage[]) : [];
+    const res = await fetch(`/api/conversations?user_id=${encodeURIComponent(userId)}`);
+    if (!res.ok) return [];
+    return res.json();
   } catch { return []; }
 }
 
-function loadHistory(): ConversationRecord[] {
-  if (typeof window === "undefined") return [];
+async function apiLoadMessages(conversationId: string): Promise<UIMessage[]> {
   try {
-    const raw = localStorage.getItem(HISTORY_KEY);
-    return raw ? (JSON.parse(raw) as ConversationRecord[]) : [];
+    const res = await fetch(`/api/conversations/${conversationId}`);
+    if (!res.ok) return [];
+    const logs: StoredLog[] = await res.json();
+    return logs.flatMap((log) => {
+      const msgs: UIMessage[] = [
+        {
+          id: `${log.id}-u`,
+          role: "user",
+          parts: [{ type: "text", text: log.user_message }],
+        },
+      ];
+      if (log.assistant_response) {
+        msgs.push({
+          id: `${log.id}-a`,
+          role: "assistant",
+          parts: [{ type: "text", text: log.assistant_response }],
+        });
+      }
+      return msgs;
+    });
   } catch { return []; }
 }
 
-function archiveConversation(messages: UIMessage[]): void {
-  if (messages.length === 0) return;
-  const userMsg = messages.find((m) => m.role === "user");
-  const preview = userMsg?.parts.find(isTextUIPart)?.text ?? "Conversación";
-  const record: ConversationRecord = {
-    id: crypto.randomUUID(),
-    timestamp: new Date().toISOString(),
-    preview: preview.slice(0, 80),
-    messages: messages.slice(-60),
-  };
+async function apiLogPrediction(
+  conversationId: string,
+  userId: string,
+  userMessage: string,
+  assistantResponse: string,
+  toolInvocations: unknown[],
+  durationMs: number,
+): Promise<void> {
   try {
-    const history = loadHistory();
-    history.unshift(record);
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, MAX_HISTORY)));
-  } catch { /* ignore quota */ }
+    await fetch(`/api/conversations/${conversationId}/logs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_id: userId,
+        user_message: userMessage,
+        assistant_response: assistantResponse,
+        tool_invocations: toolInvocations,
+        duration_ms: durationMs,
+        is_success: true,
+      }),
+    });
+  } catch { /* fire-and-forget */ }
 }
 
-function formatRelativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60_000);
-  if (mins < 60) return `hace ${mins}m`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `hace ${hrs}h`;
-  return `hace ${Math.floor(hrs / 24)}d`;
+async function apiGenerateTitle(conversationId: string, userMessage: string): Promise<string | null> {
+  try {
+    const res = await fetch("/api/conversations/generate-title", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ conversationId, userMessage }),
+    });
+    if (!res.ok) return null;
+    const { title } = await res.json();
+    return title ?? null;
+  } catch { return null; }
 }
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function ChatPage() {
-  const [history, setHistory] = useState<ConversationRecord[]>([]);
   const { messages, sendMessage, status, setMessages } = useChat({});
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const isLoading = status === "submitted" || status === "streaming";
 
-  // Load from localStorage after hydration to avoid server/client mismatch (React #418)
+  // User identity
+  const [userId, setUserId] = useState<string | null>(null);
+
+  // Conversation state
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const activeConvRef = useRef<string | null>(null);
+  const userIdRef = useRef<string | null>(null);
+
+  // Sidebar UI state
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
+
+  // Timing & logging refs
+  const requestStartRef = useRef<number>(0);
+  const prevStatusRef = useRef(status);
+  const isFirstMessageRef = useRef(false);
+
+  // Keep refs in sync with state
+  useEffect(() => { activeConvRef.current = activeConversationId; }, [activeConversationId]);
+  useEffect(() => { userIdRef.current = userId; }, [userId]);
+
+  // Initialize after hydration (avoid SSR mismatch)
   useEffect(() => {
-    const saved = loadCurrent();
-    if (saved.length > 0) setMessages(saved);
-    setHistory(loadHistory());
+    const uid = getUserId();
+    setUserId(uid);
+
+    const storedOpen = localStorage.getItem(SIDEBAR_OPEN_KEY);
+    if (storedOpen !== null) setSidebarOpen(storedOpen === "true");
+
+    const storedWidth = parseInt(localStorage.getItem(SIDEBAR_WIDTH_KEY) ?? "");
+    if (!isNaN(storedWidth)) setSidebarWidth(Math.min(storedWidth, SIDEBAR_MAX_WIDTH));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Fetch conversations when userId is ready
+  const refreshConversations = useCallback(async () => {
+    if (!userIdRef.current) return;
+    const convs = await apiFetchConversations(userIdRef.current);
+    setConversations(convs);
+  }, []);
+
   useEffect(() => {
-    if (messages.length === 0) return;
-    try {
-      localStorage.setItem(CURRENT_KEY, JSON.stringify(messages.slice(-100)));
-    } catch { /* quota exceeded */ }
-  }, [messages]);
+    if (userId) refreshConversations();
+  }, [userId, refreshConversations]);
 
-  function newConversation() {
-    archiveConversation(messages);
-    setMessages([]);
-    localStorage.removeItem(CURRENT_KEY);
-    setHistory(loadHistory());
-  }
-
-  function restoreConversation(record: ConversationRecord) {
-    if (messages.length > 0) archiveConversation(messages);
-    setMessages(record.messages);
-    localStorage.setItem(CURRENT_KEY, JSON.stringify(record.messages));
-    const updated = loadHistory().filter((h) => h.id !== record.id);
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
-    setHistory(updated);
-  }
-
+  // Auto-scroll
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isLoading]);
 
-  function handleSubmit(e: React.FormEvent) {
+  // Log prediction when stream finishes
+  useEffect(() => {
+    if (prevStatusRef.current === "streaming" && status === "ready") {
+      const convId = activeConvRef.current;
+      const uid = userIdRef.current;
+      if (convId && uid) {
+        const userMsg = [...messages].reverse().find((m) => m.role === "user");
+        const assistantMsg = [...messages].reverse().find((m) => m.role === "assistant");
+        const userText = userMsg?.parts.filter(isTextUIPart).map((p) => p.text).join("") ?? "";
+        const assistantText = assistantMsg?.parts.filter(isTextUIPart).map((p) => p.text).join("") ?? "";
+        const toolInvocations = assistantMsg?.parts
+          .filter(isToolUIPart)
+          .filter((p) => p.state === "output-available")
+          .map((p) => ({ toolName: getToolName(p), output: (p as { output: unknown }).output })) ?? [];
+        const duration = Date.now() - requestStartRef.current;
+
+        void apiLogPrediction(convId, uid, userText, assistantText, toolInvocations, duration);
+
+        if (isFirstMessageRef.current) {
+          isFirstMessageRef.current = false;
+          void apiGenerateTitle(convId, userText).then((title) => {
+            if (title) {
+              setConversations((prev) =>
+                prev.map((c) => (c.id === convId ? { ...c, title } : c)),
+              );
+            }
+          });
+        } else {
+          // Update last_message_at in local state
+          setConversations((prev) =>
+            prev.map((c) =>
+              c.id === convId ? { ...c, last_message_at: new Date().toISOString() } : c,
+            ),
+          );
+        }
+      }
+    }
+    prevStatusRef.current = status;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
+
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
+
+    let convId = activeConvRef.current;
+
+    // Create conversation on first message
+    if (!convId && userId) {
+      const conv = await apiCreateConversation(userId);
+      if (conv) {
+        convId = conv.id;
+        setActiveConversationId(conv.id);
+        setConversations((prev) => [conv, ...prev]);
+        isFirstMessageRef.current = true;
+      }
+    }
+
+    requestStartRef.current = Date.now();
     sendMessage({ text: input });
     setInput("");
   }
 
   function handleSuggestion(q: string) {
     if (isLoading) return;
-    sendMessage({ text: q });
+    setInput(q);
+  }
+
+  async function newConversation() {
+    setMessages([]);
+    setActiveConversationId(null);
+    isFirstMessageRef.current = false;
+  }
+
+  async function handleSelectConversation(id: string) {
+    if (id === activeConvRef.current) return;
+    const msgs = await apiLoadMessages(id);
+    setMessages(msgs);
+    setActiveConversationId(id);
+  }
+
+  async function handleDeleteConversation(id: string) {
+    try {
+      await fetch(`/api/conversations/${id}`, { method: "DELETE" });
+    } catch { /* ignore */ }
+    setConversations((prev) => prev.filter((c) => c.id !== id));
+    if (activeConvRef.current === id) {
+      setMessages([]);
+      setActiveConversationId(null);
+    }
+  }
+
+  async function handleToggleFavorite(id: string, current: boolean) {
+    try {
+      await fetch(`/api/conversations/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_favorite: !current }),
+      });
+    } catch { /* ignore */ }
+    setConversations((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, is_favorite: !current } : c))
+        .sort((a, b) => {
+          if (a.is_favorite !== b.is_favorite) return a.is_favorite ? -1 : 1;
+          return new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime();
+        }),
+    );
+  }
+
+  function toggleSidebar() {
+    setSidebarOpen((v) => {
+      localStorage.setItem(SIDEBAR_OPEN_KEY, String(!v));
+      return !v;
+    });
+  }
+
+  function handleSidebarWidthChange(w: number) {
+    setSidebarWidth(w);
   }
 
   return (
-    <main className="flex flex-col h-screen bg-background text-foreground">
-      {/* Header */}
-      <header className="flex items-center justify-between px-6 py-4 border-b border-border/60 backdrop-blur-sm sticky top-0 bg-background/80 z-10">
-        <div className="flex items-center gap-2.5">
-          <motion.div
-            initial={{ rotate: -10, scale: 0.9 }}
-            animate={{ rotate: 0, scale: 1 }}
-            transition={{ type: "spring", stiffness: 300 }}
-            className="text-blue-500"
-          >
-            <Search size={22} strokeWidth={2.5} />
-          </motion.div>
-          <h1 className="text-lg font-semibold tracking-tight">TransparencIA</h1>
-        </div>
-        <div className="flex items-center gap-1">
-          {messages.length > 0 && (
+    <main className="flex h-screen bg-background text-foreground overflow-hidden">
+      {/* ── Chat area ── */}
+      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+        {/* Header */}
+        <header className="flex items-center justify-between px-6 py-4 border-b border-border/60 backdrop-blur-sm bg-background/80 z-10 shrink-0">
+          <div className="flex items-center gap-2.5">
+            <motion.div
+              initial={{ rotate: -10, scale: 0.9 }}
+              animate={{ rotate: 0, scale: 1 }}
+              transition={{ type: "spring", stiffness: 300 }}
+              className="text-blue-500"
+            >
+              <Search size={22} strokeWidth={2.5} />
+            </motion.div>
+            <h1 className="text-lg font-semibold tracking-tight">TransparencIA</h1>
+          </div>
+
+          <div className="flex items-center gap-1">
+            {messages.length > 0 && (
+              <motion.button
+                whileTap={{ scale: 0.9 }}
+                onClick={newConversation}
+                title="Nueva conversación"
+                className="p-2 rounded-full text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+              >
+                <PenSquare size={18} />
+              </motion.button>
+            )}
+            <ThemeToggle />
             <motion.button
               whileTap={{ scale: 0.9 }}
-              onClick={newConversation}
-              title="Nueva conversación"
-              className="p-2 rounded-full text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+              onClick={toggleSidebar}
+              title={sidebarOpen ? "Ocultar historial" : "Mostrar historial"}
+              className={`p-2 rounded-full transition-colors ${
+                sidebarOpen
+                  ? "text-blue-500 bg-blue-50 dark:bg-blue-950/40"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
+              }`}
             >
-              <PenSquare size={18} />
+              <PanelRight size={18} />
             </motion.button>
-          )}
-          <ThemeToggle />
-        </div>
-      </header>
+          </div>
+        </header>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-6">
-        <div className="max-w-3xl mx-auto space-y-5">
-          <AnimatePresence initial={false}>
-            {messages.length === 0 && (
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="mt-12 space-y-6"
-              >
-                <p className="text-sm text-muted-foreground text-center">
-                  Auditor conversacional de contratación pública colombiana.
-                </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {SUGGESTED_QUERIES.map((q) => (
-                    <button
-                      key={q}
-                      onClick={() => handleSuggestion(q)}
-                      className="cursor-pointer text-left text-xs px-3 py-2.5 rounded-xl border border-border bg-muted/40 hover:bg-muted hover:border-blue-400/60 text-muted-foreground hover:text-foreground transition-all"
-                    >
-                      {q}
-                    </button>
-                  ))}
-                </div>
-
-                {history.length > 0 && (
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Recientes</p>
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto px-4 py-6">
+          <div className="max-w-3xl mx-auto space-y-5">
+            <AnimatePresence initial={false}>
+              {messages.length === 0 && (
+                <motion.div
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="mt-12 space-y-6"
+                >
+                  <p className="text-sm text-muted-foreground text-center">
+                    Auditor conversacional de contratación pública colombiana.
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {SUGGESTED_QUERIES.map((q) => (
                       <button
-                        onClick={() => {
-                          localStorage.removeItem(HISTORY_KEY);
-                          setHistory([]);
-                        }}
-                        className="cursor-pointer text-[10px] text-muted-foreground/60 hover:text-red-400 transition-colors"
+                        key={q}
+                        onClick={() => handleSuggestion(q)}
+                        className="cursor-pointer text-left text-xs px-3 py-2.5 rounded-xl border border-border bg-muted/40 hover:bg-muted hover:border-blue-400/60 text-muted-foreground hover:text-foreground transition-all"
                       >
-                        Limpiar historial
-                      </button>
-                    </div>
-                    {history.map((rec) => (
-                      <button
-                        key={rec.id}
-                        onClick={() => restoreConversation(rec)}
-                        className="cursor-pointer w-full text-left flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl border border-border bg-muted/20 hover:bg-muted hover:border-blue-400/60 transition-all group"
-                      >
-                        <span className="text-xs text-muted-foreground group-hover:text-foreground truncate flex-1">
-                          {rec.preview}
-                        </span>
-                        <span className="text-[10px] text-muted-foreground/60 shrink-0">
-                          {formatRelativeTime(rec.timestamp)}
-                        </span>
+                        {q}
                       </button>
                     ))}
                   </div>
-                )}
-              </motion.div>
-            )}
+                </motion.div>
+              )}
 
-            {messages.map((m) => (
-              <MessageBubble key={m.id} message={m} />
-            ))}
+              {messages.map((m) => (
+                <MessageBubble key={m.id} message={m} />
+              ))}
 
-            {isLoading && messages[messages.length - 1]?.role === "user" && (
-              <LoadingDots key="loading" />
-            )}
-          </AnimatePresence>
+              {isLoading && messages[messages.length - 1]?.role === "user" && (
+                <LoadingDots key="loading" />
+              )}
+            </AnimatePresence>
+            <div ref={bottomRef} />
+          </div>
+        </div>
 
-          <div ref={bottomRef} />
+        {/* Input */}
+        <div className="border-t border-border/60 bg-background/80 backdrop-blur-sm px-4 py-4 shrink-0">
+          <form onSubmit={handleSubmit} className="max-w-3xl mx-auto flex items-center gap-3">
+            <motion.input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Pregunta sobre contratos públicos…"
+              disabled={isLoading}
+              className="flex-1 rounded-xl border border-border bg-muted/50 px-4 py-2.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/60 disabled:opacity-50 transition-shadow"
+              onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSubmit(e as unknown as React.FormEvent)}
+            />
+            <motion.button
+              type="submit"
+              disabled={isLoading || !input.trim()}
+              whileTap={{ scale: 0.93 }}
+              whileHover={{ scale: 1.05 }}
+              className="flex items-center justify-center w-10 h-10 rounded-xl bg-blue-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors hover:bg-blue-500"
+            >
+              <Send size={16} strokeWidth={2} />
+            </motion.button>
+          </form>
         </div>
       </div>
 
-      {/* Input */}
-      <div className="border-t border-border/60 bg-background/80 backdrop-blur-sm px-4 py-4">
-        <form
-          onSubmit={handleSubmit}
-          className="max-w-3xl mx-auto flex items-center gap-3"
-        >
-          <motion.input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Pregunta sobre contratos públicos…"
-            disabled={isLoading}
-            className="flex-1 rounded-xl border border-border bg-muted/50 px-4 py-2.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/60 disabled:opacity-50 transition-shadow"
-            onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSubmit(e as unknown as React.FormEvent)}
-          />
-          <motion.button
-            type="submit"
-            disabled={isLoading || !input.trim()}
-            whileTap={{ scale: 0.93 }}
-            whileHover={{ scale: 1.05 }}
-            className="flex items-center justify-center w-10 h-10 rounded-xl bg-blue-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors hover:bg-blue-500"
+      {/* ── Right sidebar ── */}
+      <AnimatePresence>
+        {sidebarOpen && (
+          <motion.div
+            initial={{ width: 0, opacity: 0 }}
+            animate={{ width: sidebarWidth, opacity: 1 }}
+            exit={{ width: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: "easeInOut" }}
+            className="overflow-hidden shrink-0"
+            style={{ minWidth: sidebarOpen ? sidebarWidth : 0 }}
           >
-            <Send size={16} strokeWidth={2} />
-          </motion.button>
-        </form>
-      </div>
+            <ConversationSidebar
+              conversations={conversations}
+              activeId={activeConversationId}
+              onSelect={handleSelectConversation}
+              onNew={newConversation}
+              onDelete={handleDeleteConversation}
+              onToggleFavorite={handleToggleFavorite}
+              width={sidebarWidth}
+              onWidthChange={handleSidebarWidthChange}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
     </main>
   );
 }
