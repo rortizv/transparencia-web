@@ -242,6 +242,25 @@ function ToolResultCards({ payload, source }: { payload: ToolPayload; source: st
   );
 }
 
+// ── Shared markdown components ────────────────────────────────────────────────
+
+const MD_COMPONENTS = {
+  a: ({ href, children }: React.ComponentProps<"a">) => (
+    <a href={href} target="_blank" rel="noopener noreferrer"
+      className="text-blue-500 underline underline-offset-2 hover:text-blue-400 transition-colors">
+      {children}
+    </a>
+  ),
+  p: ({ children }: React.ComponentProps<"p">) => <p className="mb-2 last:mb-0">{children}</p>,
+  ul: ({ children }: React.ComponentProps<"ul">) => <ul className="mb-2 pl-4 space-y-1 list-disc">{children}</ul>,
+  ol: ({ children }: React.ComponentProps<"ol">) => <ol className="mb-2 pl-4 space-y-1 list-decimal">{children}</ol>,
+  li: ({ children }: React.ComponentProps<"li">) => <li className="leading-snug">{children}</li>,
+  strong: ({ children }: React.ComponentProps<"strong">) => <strong className="font-semibold">{children}</strong>,
+  code: ({ children }: React.ComponentProps<"code">) => (
+    <code className="bg-black/10 dark:bg-white/10 px-1 py-0.5 rounded text-xs font-mono">{children}</code>
+  ),
+};
+
 // ── Message renderer ──────────────────────────────────────────────────────────
 
 function MessageBubble({ message }: { message: UIMessage }) {
@@ -249,12 +268,9 @@ function MessageBubble({ message }: { message: UIMessage }) {
   const text = message.parts.filter(isTextUIPart).map((p) => p.text).join("");
   const toolParts = message.parts.filter(isToolUIPart);
 
-  // Pending: tool call received but no output yet
   const pendingTools = toolParts.filter(
     (p) => p.state === "input-streaming" || p.state === "input-available"
   );
-
-  // Completed: tool has output
   const completedTools = toolParts.filter((p) => p.state === "output-available");
 
   if (!text && pendingTools.length === 0 && completedTools.length === 0) return null;
@@ -266,66 +282,44 @@ function MessageBubble({ message }: { message: UIMessage }) {
       transition={{ duration: 0.25, ease: "easeOut" }}
       className={`flex flex-col gap-2 ${isUser ? "items-end" : "items-start"}`}
     >
-      {/* Tool status while pending */}
+      {/* Tool status indicator while waiting */}
       {pendingTools.map((p) => (
         <ToolStatusBubble key={p.toolCallId} toolName={getToolName(p)} />
       ))}
 
-      {/* Contract cards from tool results — shown before the text summary */}
-      {!isUser && completedTools.map((p) => {
-        const payload = (p as { output: ToolPayload }).output;
-        return (
-          <ToolResultCards
-            key={p.toolCallId}
-            payload={payload}
-            source={getToolName(p)}
-          />
-        );
-      })}
+      {/* User bubble */}
+      {isUser && text && (
+        <div className="rounded-2xl px-4 py-3 max-w-[82%] text-sm leading-relaxed bg-blue-600 text-white rounded-br-sm">
+          {text}
+        </div>
+      )}
 
-      {/* Text bubble */}
-      {text && (
-        <div
-          className={`rounded-2xl px-4 py-3 max-w-[82%] text-sm leading-relaxed ${
-            isUser
-              ? "bg-blue-600 text-white rounded-br-sm"
-              : "bg-muted text-foreground rounded-bl-sm"
-          }`}
-        >
-          {!isUser && (
-            <span className="block text-[11px] font-semibold text-muted-foreground mb-1.5 uppercase tracking-wide">
+      {/* Assistant: single unified bubble with cards + text */}
+      {!isUser && (
+        <div className="rounded-2xl bg-muted text-foreground rounded-bl-sm max-w-[88%] overflow-hidden">
+          <div className="px-4 pt-3 pb-1">
+            <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
               TransparencIA
             </span>
-          )}
-          <div className={`prose prose-sm max-w-none ${isUser ? "prose-invert" : "dark:prose-invert"}`}>
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                a: ({ href, children }) => (
-                  <a
-                    href={href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-500 underline underline-offset-2 hover:text-blue-400 transition-colors"
-                  >
-                    {children}
-                  </a>
-                ),
-                p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
-                ul: ({ children }) => <ul className="mb-2 pl-4 space-y-1 list-disc">{children}</ul>,
-                ol: ({ children }) => <ol className="mb-2 pl-4 space-y-1 list-decimal">{children}</ol>,
-                li: ({ children }) => <li className="leading-snug">{children}</li>,
-                strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
-                code: ({ children }) => (
-                  <code className="bg-black/10 dark:bg-white/10 px-1 py-0.5 rounded text-xs font-mono">
-                    {children}
-                  </code>
-                ),
-              }}
-            >
-              {text}
-            </ReactMarkdown>
           </div>
+
+          {completedTools.map((p) => {
+            const payload = (p as { output: ToolPayload }).output;
+            if (!payload?.results?.length) return null;
+            return (
+              <div key={p.toolCallId} className="px-3 pb-2">
+                <ToolResultCards payload={payload} source={getToolName(p)} />
+              </div>
+            );
+          })}
+
+          {text && (
+            <div className="px-4 pb-3 pt-1 text-sm leading-relaxed prose prose-sm max-w-none dark:prose-invert">
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>
+                {text}
+              </ReactMarkdown>
+            </div>
+          )}
         </div>
       )}
     </motion.div>
