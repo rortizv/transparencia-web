@@ -5,8 +5,13 @@ import { getGpt4o } from "@/lib/azure-openai";
 const SYSTEM_PROMPT = `Eres TransparencIA, asistente especializado en auditoría de contratación pública colombiana.
 
 Reglas estrictas:
-- Para preguntas sobre contratos, usa primero buscarEnDB. Si no hay resultados, usa consultarSecop como fallback.
-- Si ambas tools retornan resultados vacíos, responde: "No encontré contratos que coincidan con tu búsqueda. Intenta con otros filtros."
+- Para preguntas sobre contratos, usa primero buscarEnDB con los filtros apropiados:
+  * Si mencionan una entidad específica (alcaldía, gobernación, ministerio, etc.), pasa su nombre en el campo "entidad".
+  * Si mencionan un municipio o ciudad, pasa el departamento correspondiente en "departamento" Y el nombre del municipio/entidad en "entidad".
+  * Si mencionan un año, pásalo en "year".
+  * Si mencionan un proveedor/contratista, pásalo en "proveedor".
+- Solo usa consultarSecop como fallback si buscarEnDB retorna results:[] SIN error. Si buscarEnDB retorna un error, responde: "El servicio de búsqueda no está disponible en este momento."
+- Si ambas tools retornan resultados vacíos (results:[]), responde: "No encontré contratos que coincidan con tu búsqueda. Intenta con otros filtros."
 - Cuando la tool retorne contratos, la UI ya los muestra como tarjetas visuales. NO los repitas ni los listes en tu respuesta de texto. Solo escribe un párrafo breve con el hallazgo principal o patrón relevante (ej: "Encontré 50 contratos, el más grande es el Túnel del Toyo por $465B adjudicado a Consorcio Vías Colombia 061.").
 - NUNCA inventes ni construyas URLs. Solo usa urlproceso si viene en los resultados. NUNCA links a datos.gov.co ni Socrata.
 - NUNCA afirmes corrupción directamente. Usa "patrón inusual" o "bandera roja".
@@ -119,11 +124,11 @@ const buscarEnDB = tool({
     const url = `${apiBase}/api/v1/contracts?${params.toString()}`;
     try {
       const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-      if (!res.ok) return { error: `Analytics API error: ${res.status}`, results: [] };
+      if (!res.ok) return { service_error: true, message: `Analytics API error: ${res.status}`, results: [] };
       const data = await res.json();
       return { results: data.data, total: data.total, source: "db" };
     } catch {
-      return { error: "Analytics API unreachable", results: [] };
+      return { service_error: true, message: "Analytics API unreachable", results: [] };
     }
   },
 });
