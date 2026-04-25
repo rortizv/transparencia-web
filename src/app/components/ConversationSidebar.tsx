@@ -25,6 +25,7 @@ interface Props {
   onToggleFavorite: (id: string, current: boolean) => void;
   width: number;
   onWidthChange: (w: number) => void;
+  isDesktop: boolean;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -134,12 +135,14 @@ export default function ConversationSidebar({
   onToggleFavorite,
   width,
   onWidthChange,
+  isDesktop,
 }: Props) {
   const widthRef = useRef(width);
   useEffect(() => { widthRef.current = width; }, [width]);
 
   // Drag-to-resize: drag the left edge to adjust width
   function handleResizeStart(e: React.MouseEvent) {
+    if (!isDesktop) return;
     e.preventDefault();
     const startX = e.clientX;
     const startW = widthRef.current;
@@ -166,18 +169,22 @@ export default function ConversationSidebar({
 
   return (
     <aside
-      className="relative flex border-l border-border/60 bg-muted/20 flex-col h-full overflow-hidden"
-      style={{ width }}
+      className={`relative flex border-l border-border/60 flex-col h-full overflow-hidden ${
+        isDesktop ? "bg-muted/20" : "bg-background"
+      }`}
+      style={isDesktop ? { width } : undefined}
     >
       {/* Drag handle — left edge */}
-      <div
-        className="absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-blue-500/40 active:bg-blue-500/60 z-10 transition-colors"
-        onMouseDown={handleResizeStart}
-        title="Arrastra para redimensionar"
-      />
+      {isDesktop && (
+        <div
+          className="absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-blue-500/40 active:bg-blue-500/60 z-10 transition-colors"
+          onMouseDown={handleResizeStart}
+          title="Arrastra para redimensionar"
+        />
+      )}
 
       {/* Header */}
-      <div className="flex items-center justify-between px-3 py-3 border-b border-border/60 pl-4">
+      <div className="h-14 flex items-center justify-between px-3 border-b border-border/60 pl-4 shrink-0">
         <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
           Conversaciones
         </span>

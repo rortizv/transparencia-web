@@ -76,6 +76,7 @@ const SUGGESTED_QUERIES = [
 const SIDEBAR_OPEN_KEY = "transparencia_sidebar_open";
 const SIDEBAR_WIDTH_KEY = "transparencia_sidebar_width";
 const DEFAULT_SIDEBAR_WIDTH = 280;
+const DESKTOP_BREAKPOINT = 1024;
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 
@@ -460,6 +461,7 @@ export default function ChatPage() {
   // Sidebar UI state
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
+  const [isDesktop, setIsDesktop] = useState(false);
 
   // Timing & logging refs
   const requestStartRef = useRef<number>(0);
@@ -481,6 +483,19 @@ export default function ChatPage() {
     const storedWidth = parseInt(localStorage.getItem(SIDEBAR_WIDTH_KEY) ?? "");
     if (!isNaN(storedWidth)) setSidebarWidth(Math.min(storedWidth, SIDEBAR_MAX_WIDTH));
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Responsive layout mode:
+  // - < 1024px: sidebar as overlay
+  // - >= 1024px: persistent desktop sidebar
+  useEffect(() => {
+    const media = window.matchMedia(`(min-width: ${DESKTOP_BREAKPOINT}px)`);
+    const sync = (matches: boolean) => setIsDesktop(matches);
+    sync(media.matches);
+
+    const onChange = (event: MediaQueryListEvent) => sync(event.matches);
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
   }, []);
 
   // Fetch conversations when userId is ready
@@ -620,11 +635,11 @@ export default function ChatPage() {
   }
 
   return (
-    <main className="flex h-screen bg-background text-foreground overflow-hidden">
+    <main className="relative flex h-screen bg-background text-foreground overflow-hidden">
       {/* ── Chat area ── */}
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         {/* Header */}
-        <header className="flex items-center justify-between px-6 py-4 border-b border-border/60 backdrop-blur-sm bg-background/80 z-10 shrink-0">
+        <header className="h-14 flex items-center justify-between px-4 sm:px-6 border-b border-border/60 backdrop-blur-sm bg-background/80 z-10 shrink-0">
           <div className="flex items-center gap-2.5">
             <motion.div
               initial={{ rotate: -10, scale: 0.9 }}
@@ -729,8 +744,9 @@ export default function ChatPage() {
 
       {/* ── Right sidebar ── */}
       <AnimatePresence>
-        {sidebarOpen && (
+        {sidebarOpen && isDesktop && (
           <motion.div
+            key="desktop-sidebar"
             initial={{ width: 0, opacity: 0 }}
             animate={{ width: sidebarWidth, opacity: 1 }}
             exit={{ width: 0, opacity: 0 }}
@@ -747,8 +763,46 @@ export default function ChatPage() {
               onToggleFavorite={handleToggleFavorite}
               width={sidebarWidth}
               onWidthChange={handleSidebarWidthChange}
+              isDesktop
             />
           </motion.div>
+        )}
+
+        {sidebarOpen && !isDesktop && (
+          <>
+            <motion.button
+              key="sidebar-backdrop"
+              type="button"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+              className="absolute inset-0 z-20 bg-black/10 backdrop-blur-[1px]"
+              aria-label="Cerrar historial"
+              onClick={toggleSidebar}
+            />
+
+            <motion.div
+              key="overlay-sidebar"
+              initial={{ x: "100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "100%" }}
+              transition={{ duration: 0.2, ease: "easeInOut" }}
+              className="absolute right-0 top-0 z-30 h-full w-[88%] max-w-full sm:w-88 border-l border-border/60 bg-background shadow-2xl"
+            >
+              <ConversationSidebar
+                conversations={conversations}
+                activeId={activeConversationId}
+                onSelect={handleSelectConversation}
+                onNew={newConversation}
+                onDelete={handleDeleteConversation}
+                onToggleFavorite={handleToggleFavorite}
+                width={Math.min(sidebarWidth, 352)}
+                onWidthChange={handleSidebarWidthChange}
+                isDesktop={false}
+              />
+            </motion.div>
+          </>
         )}
       </AnimatePresence>
     </main>
