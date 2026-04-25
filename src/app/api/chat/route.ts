@@ -2,6 +2,96 @@ import { convertToModelMessages, stepCountIs, streamText, tool, zodSchema } from
 import { z } from "zod";
 import { getGpt4o } from "@/lib/azure-openai";
 
+const OUT_OF_SCOPE_REPLY =
+  "Mi especialidad es la contratación pública colombiana. ¿Quieres que busque contratos, analice proveedores o detecte patrones inusuales en alguna entidad o región?";
+
+const IN_SCOPE_HINTS = [
+  "contrato",
+  "contratacion",
+  "contratista",
+  "licitacion",
+  "secop",
+  "proveedor",
+  "entidad",
+  "alcaldia",
+  "gobernacion",
+  "ministerio",
+  "compras publicas",
+  "transparencia",
+  "corrupcion",
+  "bandera roja",
+  "irregularidad",
+  "adjudic",
+  "pliego",
+  "interventoria",
+  "vigencia",
+  "rubr",
+  "cdp",
+  "rp",
+  "colombia",
+  "bogota",
+  "antioquia",
+  "valle del cauca",
+  "cundinamarca",
+  "medellin",
+  "cali",
+  "barranquilla",
+  "cartagena",
+];
+
+function normalizeText(text: string): string {
+  return text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractTextContent(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+
+  return content
+    .map((part) => {
+      if (typeof part === "string") return part;
+      if (!part || typeof part !== "object") return "";
+
+      const candidate = part as { text?: unknown; type?: unknown };
+      if (typeof candidate.text === "string") return candidate.text;
+      if (candidate.type === "text" && typeof candidate.text === "string") return candidate.text;
+      return "";
+    })
+    .join(" ")
+    .trim();
+}
+
+function latestUserMessageText(messages: unknown): string {
+  if (!Array.isArray(messages)) return "";
+
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const msg = messages[i];
+    if (!msg || typeof msg !== "object") continue;
+    const candidate = msg as { role?: unknown; content?: unknown; parts?: unknown };
+    if (candidate.role !== "user") continue;
+
+    const contentText = extractTextContent(candidate.content);
+    if (contentText) return contentText;
+
+    const partsText = extractTextContent(candidate.parts);
+    if (partsText) return partsText;
+  }
+
+  return "";
+}
+
+function isInScopeQuestion(text: string): boolean {
+  const normalized = normalizeText(text);
+  if (!normalized) return true;
+
+  return IN_SCOPE_HINTS.some((hint) => normalized.includes(hint));
+}
+
 const SYSTEM_PROMPT = `Eres TransparencIA, asistente especializado en auditoría de contratación pública colombiana.
 
 Reglas estrictas:
@@ -261,6 +351,19 @@ const consultarSecop = tool({
 
 export async function POST(req: Request) {
   const { messages } = await req.json();
+  const userText = latestUserMessageText(messages);
+
+  if (!isInScopeQuestion(userText)) {
+    const blocked = streamText({
+      model: getGpt4o(),
+      system:
+        "Eres un asistente que debe responder solo con el texto indicado, sin agregar nada más.",
+      prompt: `Responde exactamente con este texto: "${OUT_OF_SCOPE_REPLY}"`,
+      stopWhen: stepCountIs(1),
+    });
+
+    return blocked.toUIMessageStreamResponse();
+  }
 
   const result = streamText({
     model: getGpt4o(),
