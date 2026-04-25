@@ -302,7 +302,16 @@ const MD_COMPONENTS = {
   ),
 };
 
-function MessageBubble({ message }: { message: UIMessage }) {
+function formatTimestamp(d: Date): string {
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+  if (isToday) {
+    return d.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" });
+  }
+  return d.toLocaleDateString("es-CO", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function MessageBubble({ message, timestamp }: { message: UIMessage; timestamp?: Date }) {
   const isUser = message.role === "user";
   const text = message.parts.filter(isTextUIPart).map((p) => p.text).join("");
   const toolParts = message.parts.filter(isToolUIPart);
@@ -323,33 +332,47 @@ function MessageBubble({ message }: { message: UIMessage }) {
       ))}
 
       {isUser && text && (
-        <div className="rounded-2xl px-4 py-3 max-w-[82%] text-sm leading-relaxed bg-blue-600 text-white rounded-br-sm">
-          {text}
+        <div className="flex flex-col items-end gap-1">
+          <div className="rounded-2xl px-4 py-3 max-w-[82%] text-sm leading-relaxed bg-blue-600 text-white rounded-br-sm">
+            {text}
+          </div>
+          {timestamp && (
+            <span className="text-[10px] text-muted-foreground/50 pr-1">
+              {formatTimestamp(timestamp)}
+            </span>
+          )}
         </div>
       )}
 
       {!isUser && (
-        <div className="rounded-2xl bg-muted text-foreground rounded-bl-sm max-w-[88%] overflow-hidden">
-          <div className="px-4 pt-3 pb-1">
-            <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
-              TransparencIA
-            </span>
-          </div>
-          {completedTools.map((p) => {
-            const payload = (p as { output: ToolPayload }).output;
-            if (!payload?.results?.length) return null;
-            return (
-              <div key={p.toolCallId} className="px-3 pb-2">
-                <ToolResultCards payload={payload} source={getToolName(p)} />
-              </div>
-            );
-          })}
-          {text && (
-            <div className="px-4 pb-3 pt-1 text-sm leading-relaxed prose prose-sm max-w-none dark:prose-invert">
-              <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>
-                {text}
-              </ReactMarkdown>
+        <div className="flex flex-col items-start gap-1">
+          <div className="rounded-2xl bg-muted text-foreground rounded-bl-sm max-w-[88%] overflow-hidden">
+            <div className="px-4 pt-3 pb-1">
+              <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
+                TransparencIA
+              </span>
             </div>
+            {completedTools.map((p) => {
+              const payload = (p as { output: ToolPayload }).output;
+              if (!payload?.results?.length) return null;
+              return (
+                <div key={p.toolCallId} className="px-3 pb-2">
+                  <ToolResultCards payload={payload} source={getToolName(p)} />
+                </div>
+              );
+            })}
+            {text && (
+              <div className="px-4 pb-3 pt-1 text-sm leading-relaxed prose prose-sm max-w-none dark:prose-invert">
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>
+                  {text}
+                </ReactMarkdown>
+              </div>
+            )}
+          </div>
+          {timestamp && (
+            <span className="text-[10px] text-muted-foreground/50 pl-1">
+              {formatTimestamp(timestamp)}
+            </span>
           )}
         </div>
       )}
@@ -379,29 +402,36 @@ async function apiFetchConversations(userId: string): Promise<Conversation[]> {
   } catch { return []; }
 }
 
-async function apiLoadMessages(conversationId: string): Promise<UIMessage[]> {
+async function apiLoadMessages(
+  conversationId: string,
+): Promise<{ messages: UIMessage[]; timestamps: Map<string, Date> }> {
   try {
     const res = await fetch(`/api/conversations/${conversationId}`);
-    if (!res.ok) return [];
+    if (!res.ok) return { messages: [], timestamps: new Map() };
     const logs: StoredLog[] = await res.json();
-    return logs.flatMap((log) => {
-      const msgs: UIMessage[] = [
-        {
-          id: `${log.id}-u`,
-          role: "user",
-          parts: [{ type: "text", text: log.user_message }],
-        },
-      ];
+    const timestamps = new Map<string, Date>();
+    const messages = logs.flatMap((log) => {
+      const date = new Date(log.created_at);
+      const userMsg: UIMessage = {
+        id: `${log.id}-u`,
+        role: "user",
+        parts: [{ type: "text", text: log.user_message }],
+      };
+      timestamps.set(userMsg.id, date);
+      const msgs: UIMessage[] = [userMsg];
       if (log.assistant_response) {
-        msgs.push({
+        const asstMsg: UIMessage = {
           id: `${log.id}-a`,
           role: "assistant",
           parts: [{ type: "text", text: log.assistant_response }],
-        });
+        };
+        timestamps.set(asstMsg.id, date);
+        msgs.push(asstMsg);
       }
       return msgs;
     });
-  } catch { return []; }
+    return { messages, timestamps };
+  } catch { return { messages: [], timestamps: new Map() }; }
 }
 
 async function apiLogPrediction(
@@ -468,6 +498,10 @@ export default function ChatPage() {
   const prevStatusRef = useRef(status);
   const isFirstMessageRef = useRef(false);
 
+  // Message timestamps: id → Date (populated when message first appears)
+  const messageTimestampsRef = useRef<Map<string, Date>>(new Map());
+  const [timestampTick, setTimestampTick] = useState(0);
+
   // Keep refs in sync with state
   useEffect(() => { activeConvRef.current = activeConversationId; }, [activeConversationId]);
   useEffect(() => { userIdRef.current = userId; }, [userId]);
@@ -513,6 +547,19 @@ export default function ChatPage() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isLoading]);
+
+  // Record timestamp for each new message the first time it appears
+  useEffect(() => {
+    let changed = false;
+    const now = new Date();
+    for (const m of messages) {
+      if (!messageTimestampsRef.current.has(m.id)) {
+        messageTimestampsRef.current.set(m.id, now);
+        changed = true;
+      }
+    }
+    if (changed) setTimestampTick((n) => n + 1);
+  }, [messages]);
 
   // Log prediction when stream finishes
   useEffect(() => {
@@ -590,9 +637,11 @@ export default function ChatPage() {
 
   async function handleSelectConversation(id: string) {
     if (id === activeConvRef.current) return;
-    const msgs = await apiLoadMessages(id);
+    const { messages: msgs, timestamps } = await apiLoadMessages(id);
+    timestamps.forEach((date, msgId) => messageTimestampsRef.current.set(msgId, date));
     setMessages(msgs);
     setActiveConversationId(id);
+    setTimestampTick((n) => n + 1);
   }
 
   async function handleDeleteConversation(id: string) {
@@ -707,7 +756,11 @@ export default function ChatPage() {
               )}
 
               {messages.map((m) => (
-                <MessageBubble key={m.id} message={m} />
+                <MessageBubble
+                  key={m.id}
+                  message={m}
+                  timestamp={messageTimestampsRef.current.get(m.id)}
+                />
               ))}
 
               {isLoading && messages[messages.length - 1]?.role === "user" && (
