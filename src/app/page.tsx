@@ -429,12 +429,19 @@ function formatRelativeTime(iso: string): string {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function ChatPage() {
-  const [savedMessages] = useState<UIMessage[]>(loadCurrent);
-  const [history, setHistory] = useState<ConversationRecord[]>(loadHistory);
-  const { messages, sendMessage, status, setMessages } = useChat({ messages: savedMessages });
+  const [history, setHistory] = useState<ConversationRecord[]>([]);
+  const { messages, sendMessage, status, setMessages } = useChat({});
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const isLoading = status === "submitted" || status === "streaming";
+
+  // Load from localStorage after hydration to avoid server/client mismatch (React #418)
+  useEffect(() => {
+    const saved = loadCurrent();
+    if (saved.length > 0) setMessages(saved);
+    setHistory(loadHistory());
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (messages.length === 0) return;
