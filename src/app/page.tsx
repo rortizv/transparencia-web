@@ -478,7 +478,7 @@ export default function ChatPage() {
                     <button
                       key={q}
                       onClick={() => handleSuggestion(q)}
-                      className="text-left text-xs px-3 py-2.5 rounded-xl border border-border bg-muted/40 hover:bg-muted hover:border-blue-400/60 text-muted-foreground hover:text-foreground transition-all"
+                      className="cursor-pointer text-left text-xs px-3 py-2.5 rounded-xl border border-border bg-muted/40 hover:bg-muted hover:border-blue-400/60 text-muted-foreground hover:text-foreground transition-all"
                     >
                       {q}
                     </button>
@@ -494,7 +494,7 @@ export default function ChatPage() {
                           localStorage.removeItem(HISTORY_KEY);
                           setHistory([]);
                         }}
-                        className="text-[10px] text-muted-foreground/60 hover:text-red-400 transition-colors"
+                        className="cursor-pointer text-[10px] text-muted-foreground/60 hover:text-red-400 transition-colors"
                       >
                         Limpiar historial
                       </button>
@@ -503,7 +503,7 @@ export default function ChatPage() {
                       <button
                         key={rec.id}
                         onClick={() => restoreConversation(rec)}
-                        className="w-full text-left flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl border border-border bg-muted/20 hover:bg-muted hover:border-blue-400/60 transition-all group"
+                        className="cursor-pointer w-full text-left flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl border border-border bg-muted/20 hover:bg-muted hover:border-blue-400/60 transition-all group"
                       >
                         <span className="text-xs text-muted-foreground group-hover:text-foreground truncate flex-1">
                           {rec.preview}
