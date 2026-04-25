@@ -22,6 +22,7 @@ Reglas estrictas:
 - NUNCA inventes ni construyas URLs. Solo usa urlproceso si viene en los resultados. NUNCA links a datos.gov.co ni Socrata.
 - NUNCA afirmes corrupción directamente. Usa "patrón inusual" o "bandera roja".
 - Responde en español. Sé conciso.
+- Para preguntas como "¿qué contratista tiene más contratos?", "top proveedores", "proveedor que más contrata", "empresa con más contratos", usa topProveedores con los filtros de entidad/departamento/año que correspondan. Responde mencionando el top 3: nombre del proveedor, cuántos contratos y el valor total.
 - SCOPE ESTRICTO: Solo puedes ayudar con temas de contratación pública colombiana — contratos SECOP, entidades públicas, proveedores, irregularidades y transparencia gubernamental. Si te preguntan algo fuera de ese ámbito (geografía, historia, programación, recetas, chistes, etc.), responde amablemente algo como: "Mi especialidad es la contratación pública colombiana. ¿Quieres que busque contratos, analice proveedores o detecte patrones inusuales en alguna entidad o región?" No uses tools ni busques datos para preguntas fuera de scope — responde directo.`;
 
 // ── Socrata fallback ──────────────────────────────────────────────────────────
@@ -180,6 +181,42 @@ const buscarConBanderas = tool({
   },
 });
 
+const topProveedoresSchema = z.object({
+  entidad: z.string().optional().describe("Nombre parcial de la entidad contratante"),
+  departamento: z.string().optional().describe("Departamento colombiano"),
+  year: z.number().int().optional().describe("Año de firma del contrato"),
+  limit: z.number().int().optional().describe("Cuántos proveedores devolver (default 10, max 20)"),
+});
+
+const topProveedores = tool({
+  description:
+    "Ranking de proveedores con más contratos o mayor valor en una entidad o región. " +
+    "Úsala cuando pregunten por 'el contratista que más contratos tiene', 'top proveedores', " +
+    "'¿quién más contrata con X entidad?', 'empresa que más contrata'.",
+  inputSchema: zodSchema(topProveedoresSchema),
+  execute: async ({ entidad, departamento, year, limit }: z.infer<typeof topProveedoresSchema>) => {
+    const apiBase = process.env.ANALYTICS_API_URL ?? "http://localhost:8000";
+    const params = new URLSearchParams();
+    if (entidad) params.set("entidad", entidad);
+    if (departamento) params.set("departamento", departamento);
+    if (year) params.set("year", String(year));
+    params.set("limit", String(Math.min(limit ?? 10, 20)));
+
+    const url = `${apiBase}/api/v1/contracts/stats/top-providers?${params}`;
+    try {
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(10_000),
+        headers: process.env.ANALYTICS_API_KEY ? { "X-API-Key": process.env.ANALYTICS_API_KEY } : {},
+      });
+      if (!res.ok) return { service_error: true, message: `Analytics API error: ${res.status}`, results: [] };
+      const data = await res.json();
+      return { results: data, source: "db" };
+    } catch {
+      return { service_error: true, message: "Analytics API unreachable", results: [] };
+    }
+  },
+});
+
 const consultarSecop = tool({
   description:
     "Fallback: consulta contratos en tiempo real desde SECOP II (Socrata). " +
@@ -224,7 +261,7 @@ export async function POST(req: Request) {
     model: getGpt4o(),
     system: SYSTEM_PROMPT,
     messages: await convertToModelMessages(messages),
-    tools: { buscarEnDB, buscarConBanderas, consultarSecop },
+    tools: { buscarEnDB, buscarConBanderas, topProveedores, consultarSecop },
     stopWhen: stepCountIs(5),
   });
 

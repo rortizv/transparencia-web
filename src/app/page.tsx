@@ -47,14 +47,15 @@ interface ToolPayload {
 const TOOL_LABELS: Record<string, { label: string; icon: string }> = {
   buscarEnDB: { label: "Buscando en base de datos...", icon: "🔍" },
   buscarConBanderas: { label: "Analizando banderas rojas...", icon: "🚩" },
+  topProveedores: { label: "Calculando ranking de proveedores...", icon: "📊" },
   consultarSecop: { label: "Consultando SECOP II en tiempo real...", icon: "🌐" },
 };
 
 const SUGGESTED_QUERIES = [
-  "¿Cuáles son los contratos más grandes del Chocó en 2024?",
-  "Contratos de consultoría en Bogotá superiores a 500 millones",
-  "¿Qué contratos tiene la Gobernación de Antioquia en 2025?",
-  "Muéstrame contratos de obra pública en Nariño",
+  "¿Cuál es el contratista con más contratos en la Gobernación de Antioquia?",
+  "Contratos con banderas rojas en Chocó en 2025",
+  "¿Qué contratos de obra pública hay en Bolívar superiores a 500 millones?",
+  "Muéstrame contratos adjudicados de forma directa en Bogotá en 2026",
 ];
 
 // ── Formatters ────────────────────────────────────────────────────────────────
