@@ -9,7 +9,7 @@ function analyticsHeaders() {
   return h;
 }
 
-// GET /api/conversations/[id] → returns prediction_logs for context restoration
+// GET /api/conversations/[id] → returns conversation_logs for context restoration
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
