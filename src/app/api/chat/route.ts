@@ -1,21 +1,23 @@
 import { convertToModelMessages, stepCountIs, streamText, tool, zodSchema } from "ai";
 import { z } from "zod";
 import { getGpt4o } from "@/lib/azure-openai";
+import { CHAT_SYSTEM_PROMPT } from "@/lib/prompts/chat-system-prompt";
 
-const OUT_OF_SCOPE_REPLY =
-  "Mi especialidad es la contratación pública colombiana. ¿Quieres que busque contratos, analice proveedores o detecte patrones inusuales en alguna entidad o región?";
+const OUT_OF_SCOPE_REPLIES = [
+  "Mi especialidad es la contratación pública colombiana. ¿Quieres que busque contratos, analice proveedores o detecte patrones inusuales en alguna entidad o región?",
+  "Ese tema se sale de mi radar. Estoy enfocado en contratación pública colombiana: contratos SECOP, entidades y proveedores. ¿Qué te gustaría auditar?",
+  "Suena interesante tu consulta, pero aquí venimos a hablar de contratos públicos en Colombia. Si quieres, revisamos una entidad, un proveedor o una posible bandera roja.",
+  "Buena pregunta, pero ese tema no es de mi 'expertise'. Mi fuerte es la contratación pública colombiana. ¿Consultamos contratos por entidad, región o año?",
+  "Te sigo la corriente, pero por transparencia debo mantenerme en contratación pública colombiana. ¿Quieres que revisemos contratos, rankings de proveedores o patrones inusuales?",
+] as const;
 
-const IN_SCOPE_HINTS = [
+const PROCUREMENT_HINTS = [
   "contrato",
   "contratacion",
   "contratista",
   "licitacion",
   "secop",
   "proveedor",
-  "entidad",
-  "alcaldia",
-  "gobernacion",
-  "ministerio",
   "compras publicas",
   "transparencia",
   "corrupcion",
@@ -28,16 +30,117 @@ const IN_SCOPE_HINTS = [
   "rubr",
   "cdp",
   "rp",
-  "colombia",
-  "bogota",
+];
+
+const LOCATION_HINTS = [
+  // Cobertura completa de departamentos (32 + Bogotá D.C.)
+  "amazonas",
   "antioquia",
-  "valle del cauca",
+  "arauca",
+  "atlantico",
+  "bolivar",
+  "boyaca",
+  "caldas",
+  "caqueta",
+  "casanare",
+  "cauca",
+  "cesar",
+  "choco",
+  "cordoba",
   "cundinamarca",
+  "guainia",
+  "guaviare",
+  "huila",
+  "la guajira",
+  "magdalena",
+  "meta",
+  "narino",
+  "norte de santander",
+  "putumayo",
+  "quindio",
+  "risaralda",
+  "san andres",
+  "santander",
+  "sucre",
+  "tolima",
+  "valle del cauca",
+  "vaupes",
+  "vichada",
+  "bogota",
+  // Ciudades frecuentes (intencionalmente no exhaustivo)
   "medellin",
   "cali",
   "barranquilla",
   "cartagena",
+  "bucaramanga",
+  "cucuta",
+  "pereira",
+  "manizales",
+  "armenia",
+  "villavicencio",
+  "pasto",
+  "ibague",
+  "santa marta",
+  "monteria",
+  "neiva",
+  "popayan",
+  "sincelejo",
+  "valledupar",
+  "yopal",
+  "tunja",
+  "riohacha",
+  "quibdo",
+  "leticia",
+  "inirida",
+  "mitu",
+  "puerto carreno",
+  "colombia",
 ];
+
+const CONTEXT_HINTS = [
+  "entidad",
+  "alcaldia",
+  "gobernacion",
+  "ministerio",
+  "secretaria",
+  "departamento administrativo",
+  "instituto",
+  "agencia",
+  "superintendencia",
+  "hospital",
+  "empresa social del estado",
+  "empresa industrial y comercial del estado",
+  "unidad administrativa especial",
+  "establecimiento publico",
+  "concejo",
+  "personeria",
+  "contraloria",
+  "fiscalia",
+  "rama judicial",
+  "fuerzas militares",
+  "policia nacional",
+  "universidad publica",
+  "empresa publica",
+  "empresa de servicios publicos",
+  "ente territorial",
+  "distrito",
+  "municipio",
+  "departamento",
+  "gobierno nacional",
+  "orden nacional",
+  "orden territorial",
+  "proceso",
+  "adjudic",
+  "proveedor",
+  "contratista",
+  "licitacion",
+  "secop",
+  "pliego",
+  "cdp",
+  "rp",
+];
+
+const CONTEXT_ACRONYM_HINTS = ["ese", "eice", "uae", "fse", "eseh", "esehosp", "eps", "ips"] as const;
 
 function normalizeText(text: string): string {
   return text
@@ -89,36 +192,24 @@ function isInScopeQuestion(text: string): boolean {
   const normalized = normalizeText(text);
   if (!normalized) return true;
 
-  return IN_SCOPE_HINTS.some((hint) => normalized.includes(hint));
+  const hasProcurementHint = PROCUREMENT_HINTS.some((hint) => normalized.includes(hint));
+  const hasLocationHint = LOCATION_HINTS.some((hint) => normalized.includes(hint));
+  const hasContextHint =
+    CONTEXT_HINTS.some((hint) => normalized.includes(hint)) ||
+    CONTEXT_ACRONYM_HINTS.some((hint) => new RegExp(`\\b${hint}\\b`).test(normalized));
+
+  const hasInstitutionLocationPattern =
+    /\b(alcaldia|gobernacion|secretaria|instituto|agencia|superintendencia|hospital|ministerio|empresa social del estado|empresa industrial y comercial del estado|unidad administrativa especial|concejo|personeria|contraloria)\s+(de|del)\s+[a-z0-9\s]{2,}\b/.test(
+      normalized
+    );
+
+  return hasProcurementHint || (hasLocationHint && hasContextHint) || hasInstitutionLocationPattern;
 }
 
-const SYSTEM_PROMPT = `Eres TransparencIA, asistente especializado en auditoría de contratación pública colombiana.
-
-Reglas estrictas:
-- Para preguntas sobre contratos, usa primero buscarEnDB con los filtros apropiados:
-  * Si mencionan una entidad específica (alcaldía, gobernación, ministerio, etc.), pasa su nombre en el campo "entidad".
-  * Si mencionan un municipio o ciudad, pasa el departamento correspondiente en "departamento" Y el nombre del municipio/entidad en "entidad".
-  * Si mencionan un año, pásalo en "year".
-  * Si mencionan un proveedor/contratista, pásalo en "proveedor".
-- Para preguntas sobre irregularidades, banderas rojas, contratos sospechosos o anomalías, usa buscarConBanderas con el flag apropiado:
-  * "contratacion_directa" — contratos adjudicados sin licitación
-  * "proveedor_frecuente" — mismo proveedor con más de 5 contratos en la misma entidad
-  * "valor_alto_sector" — valor más de 3× la mediana del sector/departamento
-  * "sin_proceso_url" — contratos sin URL del proceso publicada
-  * "plazo_muy_corto" — contratos con plazo menor a 7 días
-- Solo usa consultarSecop como fallback si buscarEnDB retorna results:[] SIN error. Si buscarEnDB retorna un error, responde: "El servicio de búsqueda no está disponible en este momento."
-- Si ambas tools retornan resultados vacíos (results:[]), responde: "No encontré contratos que coincidan con tu búsqueda. Intenta con otros filtros."
-- Cuando la tool retorne contratos, la UI ya los muestra como tarjetas visuales. NO los repitas ni los listes en tu respuesta de texto. Solo escribe un párrafo breve con el hallazgo principal o patrón relevante (ej: "Encontré 50 contratos, el más grande es el Túnel del Toyo por $465B adjudicado a Consorcio Vías Colombia 061.").
-- NUNCA inventes ni construyas URLs. Solo usa urlproceso si viene en los resultados. NUNCA links a datos.gov.co ni Socrata.
-- NUNCA afirmes corrupción directamente. Usa "patrón inusual" o "bandera roja".
-- Responde en español. Sé conciso.
-- Para preguntas sobre "top contratistas", "quién más contrata con X", "ranking de proveedores", "contratista con más contratos", "empresa que más trabaja con X":
-  * USA topProveedores. Funciona para CUALQUIER entidad: alcaldías, gobernaciones, ministerios, INVIAS, INVIMA, INCODER, secretarías, etc.
-  * Pasa en "entidad" solo las palabras clave del nombre (ej: para "Alcaldía de Cartagena" → entidad="cartagena"; para "Gobernación de Antioquia" → entidad="antioquia"; para "INVIAS" → entidad="invias"). NO pongas el nombre completo.
-  * NUNCA uses el filtro "year" en topProveedores — los rankings son más precisos con datos históricos completos. Solo añade year si el usuario pide explícitamente "en 2024" o similar.
-  * Si topProveedores retorna resultados vacíos, reintenta con un término de entidad más corto o sin filtro de entidad.
-  * El score combina valor total (60%) + número de contratos (40%). Menciona en tu respuesta el top 3-5: nombre, contratos, valor total y score.
-- SCOPE ESTRICTO: Solo puedes ayudar con temas de contratación pública colombiana — contratos SECOP, entidades públicas, proveedores, irregularidades y transparencia gubernamental. Si te preguntan algo fuera de ese ámbito (geografía, historia, programación, recetas, chistes, etc.), responde amablemente algo como: "Mi especialidad es la contratación pública colombiana. ¿Quieres que busque contratos, analice proveedores o detecte patrones inusuales en alguna entidad o región?" No uses tools ni busques datos para preguntas fuera de scope — responde directo.`;
+function pickOutOfScopeReply(): string {
+  const index = Math.floor(Math.random() * OUT_OF_SCOPE_REPLIES.length);
+  return OUT_OF_SCOPE_REPLIES[index];
+}
 
 // ── Socrata fallback ──────────────────────────────────────────────────────────
 
@@ -354,11 +445,12 @@ export async function POST(req: Request) {
   const userText = latestUserMessageText(messages);
 
   if (!isInScopeQuestion(userText)) {
+    const blockedReply = pickOutOfScopeReply();
     const blocked = streamText({
       model: getGpt4o(),
       system:
         "Eres un asistente que debe responder solo con el texto indicado, sin agregar nada más.",
-      prompt: `Responde exactamente con este texto: "${OUT_OF_SCOPE_REPLY}"`,
+      prompt: `Responde exactamente con este texto: "${blockedReply}"`,
       stopWhen: stepCountIs(1),
     });
 
@@ -367,7 +459,7 @@ export async function POST(req: Request) {
 
   const result = streamText({
     model: getGpt4o(),
-    system: SYSTEM_PROMPT,
+    system: CHAT_SYSTEM_PROMPT,
     messages: await convertToModelMessages(messages),
     tools: { buscarEnDB, buscarConBanderas, topProveedores, consultarSecop },
     stopWhen: stepCountIs(5),
