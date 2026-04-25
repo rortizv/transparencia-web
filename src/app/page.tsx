@@ -265,7 +265,7 @@ function ToolResultCards({ payload, source }: { payload: ToolPayload; source: st
         <button
           onClick={() => downloadCSV(results)}
           title="Descargar CSV"
-          className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+          className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
         >
           <Download size={11} /> CSV
         </button>
@@ -516,7 +516,7 @@ export default function ChatPage() {
 
     const storedWidth = parseInt(localStorage.getItem(SIDEBAR_WIDTH_KEY) ?? "");
     if (!isNaN(storedWidth)) setSidebarWidth(Math.min(storedWidth, SIDEBAR_MAX_WIDTH));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Responsive layout mode:
@@ -599,7 +599,7 @@ export default function ChatPage() {
       }
     }
     prevStatusRef.current = status;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -717,11 +717,10 @@ export default function ChatPage() {
               whileTap={{ scale: 0.9 }}
               onClick={toggleSidebar}
               title={sidebarOpen ? "Ocultar historial" : "Mostrar historial"}
-              className={`p-2 rounded-full transition-colors ${
-                sidebarOpen
+              className={`p-2 rounded-full transition-colors ${sidebarOpen
                   ? "text-blue-500 bg-blue-50 dark:bg-blue-950/40"
                   : "text-muted-foreground hover:text-foreground hover:bg-muted"
-              }`}
+                }`}
             >
               <PanelRight size={18} />
             </motion.button>
