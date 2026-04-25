@@ -45,6 +45,7 @@ interface ToolPayload {
 
 const TOOL_LABELS: Record<string, { label: string; icon: string }> = {
   buscarEnDB: { label: "Buscando en base de datos...", icon: "🔍" },
+  buscarConBanderas: { label: "Analizando banderas rojas...", icon: "🚩" },
   consultarSecop: { label: "Consultando SECOP II en tiempo real...", icon: "🌐" },
 };
 

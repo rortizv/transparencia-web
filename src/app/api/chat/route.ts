@@ -10,6 +10,12 @@ Reglas estrictas:
   * Si mencionan un municipio o ciudad, pasa el departamento correspondiente en "departamento" Y el nombre del municipio/entidad en "entidad".
   * Si mencionan un año, pásalo en "year".
   * Si mencionan un proveedor/contratista, pásalo en "proveedor".
+- Para preguntas sobre irregularidades, banderas rojas, contratos sospechosos o anomalías, usa buscarConBanderas con el flag apropiado:
+  * "contratacion_directa" — contratos adjudicados sin licitación
+  * "proveedor_frecuente" — mismo proveedor con más de 5 contratos en la misma entidad
+  * "valor_alto_sector" — valor más de 3× la mediana del sector/departamento
+  * "sin_proceso_url" — contratos sin URL del proceso publicada
+  * "plazo_muy_corto" — contratos con plazo menor a 7 días
 - Solo usa consultarSecop como fallback si buscarEnDB retorna results:[] SIN error. Si buscarEnDB retorna un error, responde: "El servicio de búsqueda no está disponible en este momento."
 - Si ambas tools retornan resultados vacíos (results:[]), responde: "No encontré contratos que coincidan con tu búsqueda. Intenta con otros filtros."
 - Cuando la tool retorne contratos, la UI ya los muestra como tarjetas visuales. NO los repitas ni los listes en tu respuesta de texto. Solo escribe un párrafo breve con el hallazgo principal o patrón relevante (ej: "Encontré 50 contratos, el más grande es el Túnel del Toyo por $465B adjudicado a Consorcio Vías Colombia 061.").
@@ -133,6 +139,40 @@ const buscarEnDB = tool({
   },
 });
 
+const buscarConBanderasSchema = z.object({
+  flag: z.enum(["contratacion_directa", "proveedor_frecuente", "valor_alto_sector", "sin_proceso_url", "plazo_muy_corto"])
+    .describe("Tipo de bandera roja a buscar"),
+  departamento: z.string().optional().describe("Filtrar por departamento"),
+  year: z.number().int().optional().describe("Filtrar por año de firma"),
+  entidad: z.string().optional().describe("Filtrar por entidad"),
+  page_size: z.number().int().optional().describe("Número de resultados (default 20, max 50)"),
+});
+
+const buscarConBanderas = tool({
+  description:
+    "Busca contratos con banderas rojas o patrones irregulares en la base de datos. " +
+    "Úsala cuando pregunten por irregularidades, corrupción, contratos sospechosos o anomalías.",
+  inputSchema: zodSchema(buscarConBanderasSchema),
+  execute: async ({ flag, departamento, year, entidad, page_size }: z.infer<typeof buscarConBanderasSchema>) => {
+    const apiBase = process.env.ANALYTICS_API_URL ?? "http://localhost:8000";
+    const params = new URLSearchParams({ flag });
+    if (departamento) params.set("departamento", departamento);
+    if (year) params.set("year", String(year));
+    if (entidad) params.set("entidad", entidad);
+    params.set("page_size", String(Math.min(page_size ?? 20, 50)));
+
+    const url = `${apiBase}/api/v1/contracts?${params.toString()}`;
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+      if (!res.ok) return { service_error: true, message: `Analytics API error: ${res.status}`, results: [] };
+      const data = await res.json();
+      return { results: data.data, total: data.total, source: "db", flag };
+    } catch {
+      return { service_error: true, message: "Analytics API unreachable", results: [] };
+    }
+  },
+});
+
 const consultarSecop = tool({
   description:
     "Fallback: consulta contratos en tiempo real desde SECOP II (Socrata). " +
@@ -177,7 +217,7 @@ export async function POST(req: Request) {
     model: getGpt4o(),
     system: SYSTEM_PROMPT,
     messages: await convertToModelMessages(messages),
-    tools: { buscarEnDB, consultarSecop },
+    tools: { buscarEnDB, buscarConBanderas, consultarSecop },
     stopWhen: stepCountIs(5),
   });
 
