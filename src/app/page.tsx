@@ -328,22 +328,64 @@ function MessageBubble({ message }: { message: UIMessage }) {
 
 // ── localStorage persistence ──────────────────────────────────────────────────
 
-const STORAGE_KEY = "transparencia_chat_v1";
+const CURRENT_KEY = "transparencia_current_v1";
+const HISTORY_KEY = "transparencia_history_v1";
+const MAX_HISTORY = 5;
 
-function loadMessages(): UIMessage[] {
+interface ConversationRecord {
+  id: string;
+  timestamp: string;
+  preview: string;
+  messages: UIMessage[];
+}
+
+function loadCurrent(): UIMessage[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(CURRENT_KEY);
     return raw ? (JSON.parse(raw) as UIMessage[]) : [];
-  } catch {
-    return [];
-  }
+  } catch { return []; }
+}
+
+function loadHistory(): ConversationRecord[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    return raw ? (JSON.parse(raw) as ConversationRecord[]) : [];
+  } catch { return []; }
+}
+
+function archiveConversation(messages: UIMessage[]): void {
+  if (messages.length === 0) return;
+  const userMsg = messages.find((m) => m.role === "user");
+  const preview = userMsg?.parts.find(isTextUIPart)?.text ?? "Conversación";
+  const record: ConversationRecord = {
+    id: crypto.randomUUID(),
+    timestamp: new Date().toISOString(),
+    preview: preview.slice(0, 80),
+    messages: messages.slice(-60),
+  };
+  try {
+    const history = loadHistory();
+    history.unshift(record);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, MAX_HISTORY)));
+  } catch { /* ignore quota */ }
+}
+
+function formatRelativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 60) return `hace ${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `hace ${hrs}h`;
+  return `hace ${Math.floor(hrs / 24)}d`;
 }
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function ChatPage() {
-  const [savedMessages] = useState<UIMessage[]>(loadMessages);
+  const [savedMessages] = useState<UIMessage[]>(loadCurrent);
+  const [history, setHistory] = useState<ConversationRecord[]>(loadHistory);
   const { messages, sendMessage, status, setMessages } = useChat({ messages: savedMessages });
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -352,15 +394,24 @@ export default function ChatPage() {
   useEffect(() => {
     if (messages.length === 0) return;
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(messages.slice(-100)));
-    } catch {
-      // quota exceeded — silently ignore
-    }
+      localStorage.setItem(CURRENT_KEY, JSON.stringify(messages.slice(-100)));
+    } catch { /* quota exceeded */ }
   }, [messages]);
 
-  function clearHistory() {
+  function newConversation() {
+    archiveConversation(messages);
     setMessages([]);
-    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(CURRENT_KEY);
+    setHistory(loadHistory());
+  }
+
+  function restoreConversation(record: ConversationRecord) {
+    if (messages.length > 0) archiveConversation(messages);
+    setMessages(record.messages);
+    localStorage.setItem(CURRENT_KEY, JSON.stringify(record.messages));
+    const updated = loadHistory().filter((h) => h.id !== record.id);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
+    setHistory(updated);
   }
 
   useEffect(() => {
@@ -398,7 +449,7 @@ export default function ChatPage() {
           {messages.length > 0 && (
             <motion.button
               whileTap={{ scale: 0.9 }}
-              onClick={clearHistory}
+              onClick={newConversation}
               title="Nueva conversación"
               className="p-2 rounded-full text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
             >
@@ -433,6 +484,26 @@ export default function ChatPage() {
                     </button>
                   ))}
                 </div>
+
+                {history.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Recientes</p>
+                    {history.map((rec) => (
+                      <button
+                        key={rec.id}
+                        onClick={() => restoreConversation(rec)}
+                        className="w-full text-left flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl border border-border bg-muted/20 hover:bg-muted hover:border-blue-400/60 transition-all group"
+                      >
+                        <span className="text-xs text-muted-foreground group-hover:text-foreground truncate flex-1">
+                          {rec.preview}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground/60 shrink-0">
+                          {formatRelativeTime(rec.timestamp)}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </motion.div>
             )}
 
