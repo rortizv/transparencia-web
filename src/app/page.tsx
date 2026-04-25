@@ -4,7 +4,7 @@ import { useChat } from "@ai-sdk/react";
 import { getToolName, isTextUIPart, isToolUIPart } from "ai";
 import type { UIMessage } from "ai";
 import { AnimatePresence, motion } from "framer-motion";
-import { Building2, Calendar, ExternalLink, MapPin, Moon, Search, Send, Sun, User, Zap } from "lucide-react";
+import { Building2, Calendar, ExternalLink, MapPin, Moon, PenSquare, Search, Send, Sun, User, Zap } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -326,13 +326,42 @@ function MessageBubble({ message }: { message: UIMessage }) {
   );
 }
 
+// ── localStorage persistence ──────────────────────────────────────────────────
+
+const STORAGE_KEY = "transparencia_chat_v1";
+
+function loadMessages(): UIMessage[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as UIMessage[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function ChatPage() {
-  const { messages, sendMessage, status } = useChat();
+  const [savedMessages] = useState<UIMessage[]>(loadMessages);
+  const { messages, sendMessage, status, setMessages } = useChat({ messages: savedMessages });
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const isLoading = status === "submitted" || status === "streaming";
+
+  useEffect(() => {
+    if (messages.length === 0) return;
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(messages.slice(-100)));
+    } catch {
+      // quota exceeded — silently ignore
+    }
+  }, [messages]);
+
+  function clearHistory() {
+    setMessages([]);
+    localStorage.removeItem(STORAGE_KEY);
+  }
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -365,7 +394,19 @@ export default function ChatPage() {
           </motion.div>
           <h1 className="text-lg font-semibold tracking-tight">TransparencIA</h1>
         </div>
-        <ThemeToggle />
+        <div className="flex items-center gap-1">
+          {messages.length > 0 && (
+            <motion.button
+              whileTap={{ scale: 0.9 }}
+              onClick={clearHistory}
+              title="Nueva conversación"
+              className="p-2 rounded-full text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            >
+              <PenSquare size={18} />
+            </motion.button>
+          )}
+          <ThemeToggle />
+        </div>
       </header>
 
       {/* Messages */}
