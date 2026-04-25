@@ -129,7 +129,10 @@ const buscarEnDB = tool({
 
     const url = `${apiBase}/api/v1/contracts?${params.toString()}`;
     try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(10_000),
+        headers: process.env.ANALYTICS_API_KEY ? { "X-API-Key": process.env.ANALYTICS_API_KEY } : {},
+      });
       if (!res.ok) return { service_error: true, message: `Analytics API error: ${res.status}`, results: [] };
       const data = await res.json();
       return { results: data.data, total: data.total, source: "db" };
@@ -163,7 +166,10 @@ const buscarConBanderas = tool({
 
     const url = `${apiBase}/api/v1/contracts?${params.toString()}`;
     try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(10_000),
+        headers: process.env.ANALYTICS_API_KEY ? { "X-API-Key": process.env.ANALYTICS_API_KEY } : {},
+      });
       if (!res.ok) return { service_error: true, message: `Analytics API error: ${res.status}`, results: [] };
       const data = await res.json();
       return { results: data.data, total: data.total, source: "db", flag };
