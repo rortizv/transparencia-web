@@ -4,7 +4,7 @@ import { useChat } from "@ai-sdk/react";
 import { getToolName, isTextUIPart, isToolUIPart } from "ai";
 import type { UIMessage } from "ai";
 import { AnimatePresence, motion } from "framer-motion";
-import { Building2, Calendar, ExternalLink, MapPin, Moon, PenSquare, Search, Send, Sun, User, Zap } from "lucide-react";
+import { Building2, Calendar, Download, ExternalLink, MapPin, Moon, PenSquare, Search, Send, Sun, Tag, User, Zap } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -23,6 +23,7 @@ interface ContractResult {
   urlproceso: string | null;
   estado_contrato: string | null;
   modalidad_de_contratacion: string | null;
+  sector: string | null;
   flags: Record<string, unknown>;
 }
 
@@ -165,6 +166,12 @@ function ContractCard({ contract }: { contract: ContractResult }) {
             {formatDate(contract.fecha_de_firma)}
           </span>
         )}
+        {contract.sector && (
+          <span className="flex items-center gap-1">
+            <Tag size={11} />
+            {contract.sector}
+          </span>
+        )}
       </div>
 
       {/* Red flags */}
@@ -210,7 +217,27 @@ function ContractCard({ contract }: { contract: ContractResult }) {
   );
 }
 
+function downloadCSV(results: ContractResult[]) {
+  const headers = ["id_contrato", "objeto_del_contrato", "nombre_entidad", "proveedor_adjudicado", "valor_del_contrato", "departamento", "sector", "modalidad_de_contratacion", "estado_contrato", "fecha_de_firma", "urlproceso", "banderas"];
+  const escape = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const rows = results.map((c) => [
+    c.id_contrato, c.objeto_del_contrato, c.nombre_entidad, c.proveedor_adjudicado,
+    c.valor_del_contrato, c.departamento, c.sector, c.modalidad_de_contratacion,
+    c.estado_contrato, c.fecha_de_firma, c.urlproceso,
+    Object.keys(c.flags ?? {}).join("|"),
+  ].map(escape).join(","));
+  const csv = [headers.join(","), ...rows].join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = "contratos.csv"; a.click();
+  URL.revokeObjectURL(url);
+}
+
+const PAGE_SIZE = 5;
+
 function ToolResultCards({ payload, source }: { payload: ToolPayload; source: string }) {
+  const [shown, setShown] = useState(PAGE_SIZE);
   if (payload.error) return null;
   const results = payload.results ?? [];
   if (results.length === 0) return null;
@@ -219,24 +246,40 @@ function ToolResultCards({ payload, source }: { payload: ToolPayload; source: st
     ? { icon: <Zap size={11} />, text: "Base de datos indexada" }
     : { icon: <Search size={11} />, text: "SECOP II en tiempo real" };
 
+  const total = payload.total ?? results.length;
+  const visible = results.slice(0, shown);
+  const remaining = results.length - shown;
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       className="space-y-2"
     >
-      <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-        {sourceLabel.icon}
-        <span>{sourceLabel.text} · {payload.total ?? results.length} resultado{(payload.total ?? results.length) !== 1 ? "s" : ""}</span>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          {sourceLabel.icon}
+          <span>{sourceLabel.text} · {total} resultado{total !== 1 ? "s" : ""}</span>
+        </div>
+        <button
+          onClick={() => downloadCSV(results)}
+          title="Descargar CSV"
+          className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <Download size={11} /> CSV
+        </button>
       </div>
       <div className="space-y-2">
-        {results.slice(0, 5).map((c) => (
+        {visible.map((c) => (
           <ContractCard key={c.id_contrato} contract={c} />
         ))}
-        {results.length > 5 && (
-          <p className="text-xs text-muted-foreground text-center">
-            + {results.length - 5} contratos más en la respuesta
-          </p>
+        {remaining > 0 && (
+          <button
+            onClick={() => setShown((s) => s + PAGE_SIZE)}
+            className="w-full text-xs text-muted-foreground hover:text-foreground border border-border hover:border-blue-400/60 rounded-xl py-2 transition-all"
+          >
+            Ver {Math.min(remaining, PAGE_SIZE)} más ({remaining} restantes)
+          </button>
         )}
       </div>
     </motion.div>
