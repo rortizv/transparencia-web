@@ -487,7 +487,18 @@ export default function ChatPage() {
 
                 {history.length > 0 && (
                   <div className="space-y-2">
-                    <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Recientes</p>
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Recientes</p>
+                      <button
+                        onClick={() => {
+                          localStorage.removeItem(HISTORY_KEY);
+                          setHistory([]);
+                        }}
+                        className="text-[10px] text-muted-foreground/60 hover:text-red-400 transition-colors"
+                      >
+                        Limpiar historial
+                      </button>
+                    </div>
                     {history.map((rec) => (
                       <button
                         key={rec.id}
