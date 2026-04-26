@@ -26,7 +26,7 @@ function getIp(request: NextRequest): string {
   );
 }
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const ip = getIp(request);
 
   if (upstashRatelimit) {
